@@ -14,6 +14,17 @@ The default template is [`bcomnes/go-template`](https://github.com/bcomnes/go-te
 
 ## Install
 
+Install the standalone command with [Homebrew](https://brew.sh):
+
+```console
+brew install bcomnes/tap/goproject
+```
+
+This adds the `bcomnes/tap` tap automatically.
+Update it later with `brew upgrade goproject`.
+
+Alternatively, install the latest source with Go:
+
 ```console
 go install github.com/bcomnes/goproject@latest
 ```

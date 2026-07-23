@@ -2,9 +2,13 @@ name: tests
 
 on: [pull_request, push]
 
+permissions: {}
+
 jobs:
   test:
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
 
     strategy:
       matrix:
@@ -13,6 +17,8 @@ jobs:
 
     steps:
     - uses: actions/checkout@v7
+      with:
+        persist-credentials: false
     - uses: actions/setup-go@v7
       with:
         go-version: ${{ matrix.go }}
@@ -21,7 +27,7 @@ jobs:
 
   automerge:
     needs: test
-    if: ${{ github.actor == 'dependabot[bot]' && github.event_name == 'pull_request' && startsWith(github.head_ref, 'dependabot/github_actions/actions/') }}
+    if: ${{ github.event_name == 'pull_request' && github.event.pull_request.user.login == 'dependabot[bot]' && startsWith(github.head_ref, 'dependabot/github_actions/actions/') }}
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write
