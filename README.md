@@ -9,6 +9,7 @@
 [pkg-go-dev-url]: https://pkg.go.dev/github.com/bcomnes/goproject/pkg
 
 `goproject` is a command and library for creating projects from tar-based templates.
+It is a Go port of [`mafintosh/create-project`](https://github.com/mafintosh/create-project).
 The default template is [`bcomnes/go-template`](https://github.com/bcomnes/go-template) on its `master` branch.
 
 ## Install
