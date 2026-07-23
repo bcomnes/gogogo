@@ -9,7 +9,6 @@
 [pkg-go-dev-url]: https://pkg.go.dev/github.com/bcomnes/goproject/pkg
 
 `goproject` is a command and library for creating projects from tar-based templates.
-
 The default template is [`bcomnes/go-template`](https://github.com/bcomnes/go-template) on its `master` branch.
 
 ## Install
@@ -39,7 +38,6 @@ goproject my-project next
 ```
 
 Flags must appear before the project name, matching the standard Go `flag` package convention.
-
 Pass template parameters with repeatable `-set key=value` flags:
 
 ```console
@@ -63,13 +61,9 @@ Run `goproject -help` for complete help text and flag descriptions.
 ### Template placeholders
 
 Text files may use both `{{key}}` and `__key__` placeholders.
-
 The `name` parameter defaults to the destination directory's base name.
-
 Unknown placeholders are left unchanged.
-
 Use `__name__` in files that must remain syntactically valid before generation.
-
 For example, a template `go.mod` can contain:
 
 ```go
@@ -77,7 +71,6 @@ module github.com/bcomnes/__name__
 ```
 
 Likewise, a Go package declaration can contain `package __name__`.
-
 Binary files are detected from their media type and complete contents, then copied byte-for-byte without placeholder substitution.
 
 ### Configuration
@@ -89,17 +82,13 @@ goproject -configure
 ```
 
 Configuration is stored in `~/.config/goproject.json` by default.
-
 Set `GOPROJECT_CONFIG` to use a different configuration path.
 
 ### Extraction behavior
 
 The destination must not already exist.
-
 Files are extracted into a private staging directory and published atomically.
-
 The common top-level directory in the archive is removed.
-
 Unsafe paths, escaping links, duplicate paths, and unsupported archive entries are rejected.
 
 ## Library usage
