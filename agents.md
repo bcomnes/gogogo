@@ -1,6 +1,6 @@
 # Agent Guidelines
 
-- Write Markdown prose with one sentence per line so git diffs stay focused and readable.
+- Write Markdown prose with one sentence per line. Use one newline between sentences to keep them in the same paragraph; two newlines create a new paragraph.
 - Format changed Go files with `gofmt` before finishing.
 - Prefer the Go standard library unless a dependency clearly improves the implementation.
 - Run `go mod tidy` only when adding, removing, or changing module dependencies.
