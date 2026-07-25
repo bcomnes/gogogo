@@ -5,12 +5,15 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	gogogo "github.com/bcomnes/gogogo/pkg"
 )
 
 func TestParseOptions(t *testing.T) {
@@ -44,6 +47,20 @@ func TestParseOptionsRejectsFlagsAfterProjectName(t *testing.T) {
 	}
 }
 
+func TestParseOptionsRejectsInvalidRepositoryOptions(t *testing.T) {
+	t.Parallel()
+
+	for _, arguments := range [][]string{
+		{"-github=secret", "example"},
+		{"-github-owner=acme", "example"},
+		{"-no-git", "-github=private", "example"},
+	} {
+		if _, err := parseOptions(arguments); err == nil {
+			t.Errorf("parseOptions(%q) unexpectedly succeeded", arguments)
+		}
+	}
+}
+
 func TestApplicationHelp(t *testing.T) {
 	t.Parallel()
 
@@ -72,9 +89,11 @@ func TestApplicationCreatesProjectFromFile(t *testing.T) {
 	}
 
 	destination := filepath.Join(temporaryDirectory, "example")
+	runner := &testProjectCommandRunner{outputs: [][]byte{nil, nil, nil}}
 	app := &application{
 		client:     http.DefaultClient,
 		configPath: filepath.Join(temporaryDirectory, "config.json"),
+		commands:   runner,
 	}
 	var output bytes.Buffer
 	var errorOutput bytes.Buffer
@@ -93,6 +112,11 @@ func TestApplicationCreatesProjectFromFile(t *testing.T) {
 	if !strings.Contains(output.String(), "Creating new project example") || !strings.Contains(output.String(), "Project created in ") {
 		t.Fatalf("stdout = %q", output.String())
 	}
+	assertProjectCommands(t, runner.calls, destination, []testProjectCommand{
+		{name: "git", args: []string{"init"}},
+		{name: "git", args: []string{"add", "--all"}},
+		{name: "git", args: []string{"commit", "--allow-empty", "-m", "Initial commit"}},
+	})
 }
 
 func TestApplicationUsesDefaultTemplate(t *testing.T) {
@@ -120,7 +144,7 @@ func TestApplicationUsesDefaultTemplate(t *testing.T) {
 		configPath: filepath.Join(temporaryDirectory, "config.json"),
 	}
 	var errorOutput bytes.Buffer
-	exitCode := app.run(context.Background(), []string{destination}, strings.NewReader(""), io.Discard, &errorOutput)
+	exitCode := app.run(context.Background(), []string{"-no-git", destination}, strings.NewReader(""), io.Discard, &errorOutput)
 	if exitCode != 0 {
 		t.Fatalf("run() exit code = %d, stderr = %s", exitCode, errorOutput.String())
 	}
@@ -135,6 +159,114 @@ func TestApplicationUsesDefaultTemplate(t *testing.T) {
 	}
 	if string(readme) != "# example\n" {
 		t.Fatalf("README.md = %q", readme)
+	}
+}
+
+func TestInitializeRepository(t *testing.T) {
+	t.Parallel()
+
+	destination := t.TempDir()
+	runner := &testProjectCommandRunner{outputs: [][]byte{nil, nil, nil}}
+	app := &application{commands: runner}
+	var output bytes.Buffer
+	if err := app.initializeRepository(context.Background(), projectForTest(destination), options{}, &output); err != nil {
+		t.Fatalf("initializeRepository() error = %v", err)
+	}
+
+	assertProjectCommands(t, runner.calls, destination, []testProjectCommand{
+		{name: "git", args: []string{"init"}},
+		{name: "git", args: []string{"add", "--all"}},
+		{name: "git", args: []string{"commit", "--allow-empty", "-m", "Initial commit"}},
+	})
+	if !strings.Contains(output.String(), "Initialized Git repository") || !strings.Contains(output.String(), "Created initial commit") {
+		t.Fatalf("output = %q", output.String())
+	}
+}
+
+func TestInitializeRepositoryCreatesGitHubRepository(t *testing.T) {
+	t.Parallel()
+
+	destination := t.TempDir()
+	runner := &testProjectCommandRunner{outputs: [][]byte{nil, nil, nil, nil, []byte("https://github.com/acme/example\n")}}
+	app := &application{commands: runner}
+	var output bytes.Buffer
+	opts := options{github: "public", githubOwner: "acme"}
+	if err := app.initializeRepository(context.Background(), projectForTest(destination), opts, &output); err != nil {
+		t.Fatalf("initializeRepository() error = %v", err)
+	}
+
+	assertProjectCommands(t, runner.calls, destination, []testProjectCommand{
+		{name: "git", args: []string{"init"}},
+		{name: "git", args: []string{"add", "--all"}},
+		{name: "git", args: []string{"commit", "--allow-empty", "-m", "Initial commit"}},
+		{name: "gh", args: []string{"auth", "status", "--hostname", "github.com"}},
+		{name: "gh", args: []string{"repo", "create", "acme/example", "--public", "--source=.", "--remote=origin", "--push"}},
+	})
+	if runner.lookedUp != "gh" || !strings.Contains(output.String(), "https://github.com/acme/example") {
+		t.Fatalf("lookup = %q, output = %q", runner.lookedUp, output.String())
+	}
+}
+
+func TestInitializeRepositorySkipsUnavailableGitHubCLI(t *testing.T) {
+	t.Parallel()
+
+	destination := t.TempDir()
+	runner := &testProjectCommandRunner{outputs: [][]byte{nil, nil, nil}, lookErr: errors.New("not found")}
+	app := &application{commands: runner}
+	var output bytes.Buffer
+	if err := app.initializeRepository(context.Background(), projectForTest(destination), options{github: "private"}, &output); err != nil {
+		t.Fatalf("initializeRepository() error = %v", err)
+	}
+	if len(runner.calls) != 3 || !strings.Contains(output.String(), "gh was not found") {
+		t.Fatalf("calls = %#v, output = %q", runner.calls, output.String())
+	}
+}
+
+func TestInitializeRepositorySkipsUnauthenticatedGitHubCLI(t *testing.T) {
+	t.Parallel()
+
+	destination := t.TempDir()
+	runner := &testProjectCommandRunner{
+		outputs: [][]byte{nil, nil, nil, []byte("not logged in")},
+		errors:  []error{nil, nil, nil, errors.New("exit 1")},
+	}
+	app := &application{commands: runner}
+	var output bytes.Buffer
+	if err := app.initializeRepository(context.Background(), projectForTest(destination), options{github: "private"}, &output); err != nil {
+		t.Fatalf("initializeRepository() error = %v", err)
+	}
+	if len(runner.calls) != 4 || !strings.Contains(output.String(), "gh is not authenticated") || !strings.Contains(output.String(), "not logged in") {
+		t.Fatalf("calls = %#v, output = %q", runner.calls, output.String())
+	}
+}
+
+func TestInitializeRepositoryPropagatesCancellation(t *testing.T) {
+	t.Parallel()
+
+	destination := t.TempDir()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	runner := &testProjectCommandRunner{errors: []error{errors.New("signal: killed")}}
+	app := &application{commands: runner}
+	if err := app.initializeRepository(ctx, projectForTest(destination), options{}, io.Discard); !errors.Is(err, context.Canceled) {
+		t.Fatalf("initializeRepository() error = %v", err)
+	}
+}
+
+func TestInitializeRepositoryRejectsTemplateGitMetadata(t *testing.T) {
+	t.Parallel()
+
+	destination := t.TempDir()
+	if err := os.Mkdir(filepath.Join(destination, ".git"), 0o755); err != nil {
+		t.Fatalf("Mkdir() error = %v", err)
+	}
+	runner := &testProjectCommandRunner{}
+	app := &application{commands: runner}
+	if err := app.initializeRepository(context.Background(), projectForTest(destination), options{}, io.Discard); err == nil || !strings.Contains(err.Error(), "template contains") {
+		t.Fatalf("initializeRepository() error = %v", err)
+	}
+	if len(runner.calls) != 0 {
+		t.Fatalf("commands were invoked: %#v", runner.calls)
 	}
 }
 
@@ -157,6 +289,58 @@ func TestConfigureAndLoad(t *testing.T) {
 	if cfg.Defaults["owner"] != "bret" {
 		t.Fatalf("defaults = %#v", cfg.Defaults)
 	}
+}
+
+type testProjectCommand struct {
+	dir  string
+	name string
+	args []string
+}
+
+type testProjectCommandRunner struct {
+	calls    []testProjectCommand
+	outputs  [][]byte
+	errors   []error
+	lookErr  error
+	lookedUp string
+}
+
+func (runner *testProjectCommandRunner) LookPath(name string) (string, error) {
+	runner.lookedUp = name
+	if runner.lookErr != nil {
+		return "", runner.lookErr
+	}
+	return "/usr/local/bin/" + name, nil
+}
+
+func (runner *testProjectCommandRunner) Run(_ context.Context, dir, name string, args ...string) ([]byte, error) {
+	index := len(runner.calls)
+	runner.calls = append(runner.calls, testProjectCommand{dir: dir, name: name, args: append([]string(nil), args...)})
+	var output []byte
+	if index < len(runner.outputs) {
+		output = runner.outputs[index]
+	}
+	var err error
+	if index < len(runner.errors) {
+		err = runner.errors[index]
+	}
+	return output, err
+}
+
+func assertProjectCommands(t *testing.T, actual []testProjectCommand, destination string, expected []testProjectCommand) {
+	t.Helper()
+	if len(actual) != len(expected) {
+		t.Fatalf("command count = %d, want %d: %#v", len(actual), len(expected), actual)
+	}
+	for index := range expected {
+		if actual[index].dir != destination || actual[index].name != expected[index].name || strings.Join(actual[index].args, "\x00") != strings.Join(expected[index].args, "\x00") {
+			t.Fatalf("command %d = %#v, want dir %q command %#v", index, actual[index], destination, expected[index])
+		}
+	}
+}
+
+func projectForTest(destination string) gogogo.Project {
+	return gogogo.Project{Name: "example", Destination: destination}
 }
 
 type testArchiveEntry struct {

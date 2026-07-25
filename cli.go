@@ -23,6 +23,7 @@ type application struct {
 	client          *http.Client
 	configPath      string
 	configPathError error
+	commands        projectCommandRunner
 }
 
 type options struct {
@@ -31,6 +32,9 @@ type options struct {
 	version     bool
 	file        string
 	url         string
+	github      string
+	githubOwner string
+	noGit       bool
 	values      parameterFlags
 	positionals []string
 }
@@ -74,6 +78,7 @@ func newApplication() *application {
 		client:          &http.Client{Timeout: 5 * time.Minute},
 		configPath:      configPath,
 		configPathError: err,
+		commands:        execProjectCommandRunner{},
 	}
 }
 
@@ -188,6 +193,12 @@ func (a *application) createProject(ctx context.Context, opts options, cfg confi
 		return fmt.Errorf("create project: %w", err)
 	}
 	fmt.Fprintf(output, "Project created in %s\n", project.Destination)
+	if opts.noGit {
+		return nil
+	}
+	if err := a.initializeRepository(ctx, project, opts, output); err != nil {
+		return fmt.Errorf("initialize project repository: %w", err)
+	}
 	return nil
 }
 
@@ -236,6 +247,17 @@ func parseOptions(arguments []string) (options, error) {
 	if opts.file != "" && opts.url != "" {
 		return options{}, fmt.Errorf("-file and -url are mutually exclusive")
 	}
+	if opts.noGit && opts.github != "" {
+		return options{}, fmt.Errorf("-no-git and -github are mutually exclusive")
+	}
+	if opts.githubOwner != "" && opts.github == "" {
+		return options{}, fmt.Errorf("-github-owner requires -github")
+	}
+	switch opts.github {
+	case "", "private", "public", "internal":
+	default:
+		return options{}, fmt.Errorf("-github must be private, public, or internal")
+	}
 	return opts, nil
 }
 
@@ -244,7 +266,10 @@ func newFlagSet(opts *options, output io.Writer) *flag.FlagSet {
 	flags.SetOutput(output)
 	flags.BoolVar(&opts.configure, "configure", false, "Set the default repository and parameters")
 	flags.StringVar(&opts.file, "file", "", "Read a local .tar or .tar.gz template")
+	flags.StringVar(&opts.github, "github", "", "Create and push a GitHub repository: private, public, or internal")
+	flags.StringVar(&opts.githubOwner, "github-owner", "", "GitHub user or organization; defaults to the authenticated user")
 	flags.BoolVar(&opts.help, "help", false, "Show this help message and exit")
+	flags.BoolVar(&opts.noGit, "no-git", false, "Do not initialize a local Git repository")
 	flags.Var(&opts.values, "set", "Set a template parameter as key=value; may be repeated")
 	flags.StringVar(&opts.url, "url", "", "Download a .tar or .tar.gz template")
 	flags.BoolVar(&opts.version, "version", false, "Show the CLI version and exit")
@@ -261,6 +286,8 @@ Flags must be specified before the project name.
 Examples:
   gogogo my-project
   gogogo -set owner=bcomnes my-project
+  gogogo -github=private my-project
+  gogogo -github=public -github-owner=my-org my-project
   gogogo my-project owner/template#main
   gogogo -file template.tar.gz my-project
 

@@ -68,6 +68,23 @@ Download an archive from an HTTP or HTTPS URL:
 gogogo -url https://example.com/template.tar.gz my-project
 ```
 
+By default, `gogogo` initializes a local Git repository and creates an initial commit.
+Use `-no-git` to extract the project without initializing Git:
+
+```console
+gogogo -no-git my-project
+```
+
+Create and push a GitHub repository with an explicit visibility when the authenticated [GitHub CLI](https://cli.github.com) is available:
+
+```console
+gogogo -github=private my-project
+gogogo -github=public -github-owner=my-org my-project
+```
+
+The owner defaults to the user authenticated by `gh`.
+If `gh` is missing or unauthenticated, the local repository is still created and `gogogo` prints instructions for finishing the GitHub setup later.
+
 Run `gogogo -help` for complete help text and flag descriptions.
 
 ### Template placeholders
