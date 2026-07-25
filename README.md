@@ -1,14 +1,14 @@
-# goproject
+# gogogo
 
 [![Actions Status][action-img]][action-url]
 [![PkgGoDev][pkg-go-dev-img]][pkg-go-dev-url]
 
-[action-img]: https://github.com/bcomnes/goproject/actions/workflows/test.yml/badge.svg
-[action-url]: https://github.com/bcomnes/goproject/actions/workflows/test.yml
-[pkg-go-dev-img]: https://pkg.go.dev/badge/github.com/bcomnes/goproject/pkg
-[pkg-go-dev-url]: https://pkg.go.dev/github.com/bcomnes/goproject/pkg
+[action-img]: https://github.com/bcomnes/gogogo/actions/workflows/test.yml/badge.svg
+[action-url]: https://github.com/bcomnes/gogogo/actions/workflows/test.yml
+[pkg-go-dev-img]: https://pkg.go.dev/badge/github.com/bcomnes/gogogo/pkg
+[pkg-go-dev-url]: https://pkg.go.dev/github.com/bcomnes/gogogo/pkg
 
-`goproject` is a command and library for creating projects from tar-based templates.
+`gogogo` is a command and library for creating projects from tar-based templates.
 It is a Go port of [`mafintosh/create-project`](https://github.com/mafintosh/create-project).
 The default template is [`bcomnes/go-template`](https://github.com/bcomnes/go-template) on its `master` branch.
 
@@ -17,16 +17,16 @@ The default template is [`bcomnes/go-template`](https://github.com/bcomnes/go-te
 Install the standalone command with [Homebrew](https://brew.sh):
 
 ```console
-brew install bcomnes/tap/goproject
+brew install bcomnes/tap/gogogo
 ```
 
 This adds the `bcomnes/tap` tap automatically.
-Update it later with `brew upgrade goproject`.
+Update it later with `brew upgrade gogogo`.
 
 Alternatively, install the latest source with Go:
 
 ```console
-go install github.com/bcomnes/goproject@latest
+go install github.com/bcomnes/gogogo@latest
 ```
 
 ## Command-line usage
@@ -34,41 +34,41 @@ go install github.com/bcomnes/goproject@latest
 Create a project from the default Go template:
 
 ```console
-goproject my-project
+gogogo my-project
 ```
 
 Create a project from another GitHub repository and branch:
 
 ```console
-goproject my-project owner/template#main
+gogogo my-project owner/template#main
 ```
 
 A configured repository also accepts a branch name as shorthand:
 
 ```console
-goproject my-project next
+gogogo my-project next
 ```
 
 Flags must appear before the project name, matching the standard Go `flag` package convention.
 Pass template parameters with repeatable `-set key=value` flags:
 
 ```console
-goproject -set owner=bcomnes -set license=MIT my-project
+gogogo -set owner=bcomnes -set license=MIT my-project
 ```
 
 Use a local uncompressed or gzip-compressed tar archive:
 
 ```console
-goproject -file template.tar.gz my-project
+gogogo -file template.tar.gz my-project
 ```
 
 Download an archive from an HTTP or HTTPS URL:
 
 ```console
-goproject -url https://example.com/template.tar.gz my-project
+gogogo -url https://example.com/template.tar.gz my-project
 ```
 
-Run `goproject -help` for complete help text and flag descriptions.
+Run `gogogo -help` for complete help text and flag descriptions.
 
 ### Template placeholders
 
@@ -90,11 +90,11 @@ Binary files are detected from their media type and complete contents, then copi
 Set a default repository and default template parameters interactively:
 
 ```console
-goproject -configure
+gogogo -configure
 ```
 
-Configuration is stored in `~/.config/goproject.json` by default.
-Set `GOPROJECT_CONFIG` to use a different configuration path.
+Configuration is stored in `~/.config/gogogo.json` by default.
+Set `GOGOGO_CONFIG` to use a different configuration path.
 
 ### Extraction behavior
 
@@ -105,7 +105,7 @@ Unsafe paths, escaping links, duplicate paths, and unsupported archive entries a
 
 ## Library usage
 
-The implementation is available from `github.com/bcomnes/goproject/pkg`.
+The implementation is available from `github.com/bcomnes/gogogo/pkg`.
 
 ```go
 package main
@@ -115,7 +115,7 @@ import (
 	"log"
 	"os"
 
-	goproject "github.com/bcomnes/goproject/pkg"
+	gogogo "github.com/bcomnes/gogogo/pkg"
 )
 
 func main() {
@@ -125,11 +125,11 @@ func main() {
 	}
 	defer archive.Close()
 
-	project, err := goproject.Create(
+	project, err := gogogo.Create(
 		context.Background(),
 		"my-project",
 		archive,
-		goproject.Options{
+		gogogo.Options{
 			Parameters: map[string]string{"owner": "bcomnes"},
 		},
 	)
@@ -141,7 +141,7 @@ func main() {
 }
 ```
 
-Repository strings can be parsed with `goproject.ParseRepository`, and `Repository.ArchiveURL` returns the corresponding GitHub archive URL.
+Repository strings can be parsed with `gogogo.ParseRepository`, and `Repository.ArchiveURL` returns the corresponding GitHub archive URL.
 
 ## License
 

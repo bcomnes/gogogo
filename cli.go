@@ -14,10 +14,10 @@ import (
 	"strings"
 	"time"
 
-	goproject "github.com/bcomnes/goproject/pkg"
+	"github.com/bcomnes/gogogo/pkg"
 )
 
-const commandName = "goproject"
+const commandName = "gogogo"
 
 type application struct {
 	client          *http.Client
@@ -160,7 +160,7 @@ func (a *application) createProject(ctx context.Context, opts options, cfg confi
 			if !strings.Contains(repositoryArgument, "/") {
 				repo.Branch = repositoryArgument
 			} else {
-				repo, err = goproject.ParseRepository(repositoryArgument)
+				repo, err = gogogo.ParseRepository(repositoryArgument)
 				if err != nil {
 					return fmt.Errorf("parse repository: %w", err)
 				}
@@ -183,7 +183,7 @@ func (a *application) createProject(ctx context.Context, opts options, cfg confi
 	}
 
 	fmt.Fprintf(output, "Creating new project %s from %s\n", projectName, sourceLabel)
-	project, err := goproject.Create(ctx, destination, source, goproject.Options{Parameters: parameters})
+	project, err := gogogo.Create(ctx, destination, source, gogogo.Options{Parameters: parameters})
 	if err != nil {
 		return fmt.Errorf("create project: %w", err)
 	}
@@ -253,16 +253,16 @@ func newFlagSet(opts *options, output io.Writer) *flag.FlagSet {
 
 func printUsage(output io.Writer, cfg config) {
 	fmt.Fprintf(output, `Usage:
-  goproject [options] <name> [%s]
+  gogogo [options] <name> [%s]
 
 Create a project from a GitHub repository, local tar archive, or URL.
 Flags must be specified before the project name.
 
 Examples:
-  goproject my-project
-  goproject -set owner=bcomnes my-project
-  goproject my-project owner/template#main
-  goproject -file template.tar.gz my-project
+  gogogo my-project
+  gogogo -set owner=bcomnes my-project
+  gogogo my-project owner/template#main
+  gogogo -file template.tar.gz my-project
 
 Positional arguments:
   <name>          Destination directory and default name parameter

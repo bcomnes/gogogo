@@ -1,4 +1,4 @@
-package goproject
+package gogogo
 
 import (
 	"fmt"

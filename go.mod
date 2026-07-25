@@ -1,4 +1,4 @@
-module github.com/bcomnes/goproject
+module github.com/bcomnes/gogogo
 
 go 1.25.0
 

@@ -11,16 +11,16 @@ import (
 	"sort"
 	"strings"
 
-	goproject "github.com/bcomnes/goproject/pkg"
+	"github.com/bcomnes/gogogo/pkg"
 )
 
 type config struct {
-	GitHub   goproject.Repository `json:"github"`
-	Defaults map[string]string    `json:"defaults"`
+	GitHub   gogogo.Repository `json:"github"`
+	Defaults map[string]string `json:"defaults"`
 }
 
 func defaultConfig() config {
-	repo, err := goproject.ParseRepository(goproject.DefaultRepository)
+	repo, err := gogogo.ParseRepository(gogogo.DefaultRepository)
 	if err != nil {
 		panic(err)
 	}
@@ -32,7 +32,7 @@ func defaultConfig() config {
 }
 
 func defaultConfigPath() (string, error) {
-	if path := os.Getenv("GOPROJECT_CONFIG"); path != "" {
+	if path := os.Getenv("GOGOGO_CONFIG"); path != "" {
 		return path, nil
 	}
 
@@ -40,7 +40,7 @@ func defaultConfigPath() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("find home directory: %w", err)
 	}
-	return filepath.Join(home, ".config", "goproject.json"), nil
+	return filepath.Join(home, ".config", "gogogo.json"), nil
 }
 
 func loadConfig(path string) (config, error) {
@@ -64,7 +64,7 @@ func loadConfig(path string) (config, error) {
 	if cfg.Defaults == nil {
 		cfg.Defaults = make(map[string]string)
 	}
-	if _, err := goproject.ParseRepository(cfg.GitHub.String()); err != nil {
+	if _, err := gogogo.ParseRepository(cfg.GitHub.String()); err != nil {
 		return config{}, fmt.Errorf("invalid configured repository: %w", err)
 	}
 
@@ -86,7 +86,7 @@ func saveConfig(path string, cfg config) error {
 		return fmt.Errorf("create config directory: %w", err)
 	}
 
-	file, err := os.CreateTemp(filepath.Dir(path), ".goproject-*.json")
+	file, err := os.CreateTemp(filepath.Dir(path), ".gogogo-*.json")
 	if err != nil {
 		return fmt.Errorf("create temporary config: %w", err)
 	}
@@ -121,7 +121,7 @@ func configure(input io.Reader, output io.Writer, path string, cfg config) error
 		return err
 	}
 	if line != "" {
-		repo, err := goproject.ParseRepository(line)
+		repo, err := gogogo.ParseRepository(line)
 		if err != nil {
 			return err
 		}

@@ -1,4 +1,4 @@
-package goproject
+package gogogo
 
 import (
 	"bufio"
@@ -70,7 +70,7 @@ func formatFile(ctx context.Context, filename string, values map[string]string) 
 		return err
 	}
 
-	temporary, err := os.CreateTemp(filepath.Dir(filename), ".goproject-format-*")
+	temporary, err := os.CreateTemp(filepath.Dir(filename), ".gogogo-format-*")
 	if err != nil {
 		source.Close()
 		return err

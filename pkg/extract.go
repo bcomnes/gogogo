@@ -1,4 +1,4 @@
-package goproject
+package gogogo
 
 import (
 	"archive/tar"
@@ -39,7 +39,7 @@ func extractArchive(ctx context.Context, source io.Reader, destination string, v
 		return fmt.Errorf("create destination parent: %w", err)
 	}
 
-	staging, err := os.MkdirTemp(filepath.Dir(absoluteDestination), ".goproject-*")
+	staging, err := os.MkdirTemp(filepath.Dir(absoluteDestination), ".gogogo-*")
 	if err != nil {
 		return fmt.Errorf("create staging directory: %w", err)
 	}

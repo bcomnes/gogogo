@@ -9,7 +9,7 @@ all: deps generate build test ## Run all steps
 
 build: ## Build the CLI
 	@mkdir -p .gobincache
-	go build -o .gobincache/goproject .
+	go build -o .gobincache/gogogo .
 
 dev: ## Run the CLI
 	go run .

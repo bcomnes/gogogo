@@ -1,4 +1,4 @@
-package goproject_test
+package gogogo_test
 
 import (
 	"archive/tar"
@@ -9,7 +9,7 @@ import (
 	"os"
 	"path/filepath"
 
-	goproject "github.com/bcomnes/goproject/pkg"
+	"github.com/bcomnes/gogogo/pkg"
 )
 
 func ExampleCreate() {
@@ -25,10 +25,10 @@ func ExampleCreate() {
 	_, _ = writer.Write(content)
 	_ = writer.Close()
 
-	parent, _ := os.MkdirTemp("", "goproject-example-")
+	parent, _ := os.MkdirTemp("", "gogogo-example-")
 	defer os.RemoveAll(parent)
 	destination := filepath.Join(parent, "example")
-	project, _ := goproject.Create(context.Background(), destination, bytes.NewReader(archive.Bytes()), goproject.Options{})
+	project, _ := gogogo.Create(context.Background(), destination, bytes.NewReader(archive.Bytes()), gogogo.Options{})
 	readme, _ := os.Open(filepath.Join(project.Destination, "README.md"))
 	defer readme.Close()
 
