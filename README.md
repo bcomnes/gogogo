@@ -1,5 +1,7 @@
 # gogogo
 
+![gogogo logo](logo/gogogo-logo.png)
+
 [![Actions Status][action-img]][action-url]
 [![PkgGoDev][pkg-go-dev-img]][pkg-go-dev-url]
 
@@ -83,6 +85,7 @@ gogogo -github=public -github-owner=my-org my-project
 ```
 
 The owner defaults to the user authenticated by `gh`.
+Git and `gh` output is streamed while each command runs, and command deadlines prevent stalled authentication or pushes from hanging indefinitely.
 If `gh` is missing or unauthenticated, the local repository is still created and `gogogo` prints instructions for finishing the GitHub setup later.
 
 Run `gogogo -help` for complete help text and flag descriptions.

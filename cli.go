@@ -78,7 +78,6 @@ func newApplication() *application {
 		client:          &http.Client{Timeout: 5 * time.Minute},
 		configPath:      configPath,
 		configPathError: err,
-		commands:        execProjectCommandRunner{},
 	}
 }
 
@@ -127,7 +126,7 @@ func (a *application) run(ctx context.Context, arguments []string, input io.Read
 		return 2
 	}
 
-	if err := a.createProject(ctx, opts, cfg, output); err != nil {
+	if err := a.createProject(ctx, opts, cfg, output, errorOutput); err != nil {
 		fmt.Fprintf(errorOutput, "Error: %v\n", err)
 		if errors.Is(err, context.Canceled) {
 			return 130
@@ -137,7 +136,7 @@ func (a *application) run(ctx context.Context, arguments []string, input io.Read
 	return 0
 }
 
-func (a *application) createProject(ctx context.Context, opts options, cfg config, output io.Writer) error {
+func (a *application) createProject(ctx context.Context, opts options, cfg config, output, errorOutput io.Writer) error {
 	if len(opts.positionals) > 2 {
 		return fmt.Errorf("too many positional arguments")
 	}
@@ -156,8 +155,9 @@ func (a *application) createProject(ctx context.Context, opts options, cfg confi
 		source, err = os.Open(opts.file)
 		sourceLabel = opts.file
 	case opts.url != "":
-		source, err = a.openURL(ctx, opts.url)
 		sourceLabel = opts.url
+		fmt.Fprintf(output, "Downloading template from %s...\n", sourceLabel)
+		source, err = a.openURL(ctx, opts.url)
 	default:
 		repo := cfg.GitHub
 		if len(opts.positionals) == 2 {
@@ -172,6 +172,7 @@ func (a *application) createProject(ctx context.Context, opts options, cfg confi
 			}
 		}
 		sourceLabel = repo.String()
+		fmt.Fprintf(output, "Downloading template from %s...\n", sourceLabel)
 		source, err = a.openURL(ctx, repo.ArchiveURL())
 	}
 	if err != nil {
@@ -196,7 +197,7 @@ func (a *application) createProject(ctx context.Context, opts options, cfg confi
 	if opts.noGit {
 		return nil
 	}
-	if err := a.initializeRepository(ctx, project, opts, output); err != nil {
+	if err := a.initializeRepository(ctx, project, opts, output, errorOutput); err != nil {
 		return fmt.Errorf("initialize project repository: %w", err)
 	}
 	return nil

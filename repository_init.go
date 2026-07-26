@@ -8,15 +8,21 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
+	"time"
 
 	gogogo "github.com/bcomnes/gogogo/pkg"
 )
 
 type projectCommandRunner interface {
 	LookPath(name string) (string, error)
-	Run(ctx context.Context, dir, name string, args ...string) ([]byte, error)
+	Run(ctx context.Context, dir string, stdout, stderr io.Writer, name string, args ...string) error
 }
+
+const (
+	gitCommandTimeout = time.Minute
+	ghAuthTimeout     = 30 * time.Second
+	ghCreateTimeout   = 2 * time.Minute
+)
 
 type execProjectCommandRunner struct{}
 
@@ -24,28 +30,36 @@ func (execProjectCommandRunner) LookPath(name string) (string, error) {
 	return exec.LookPath(name)
 }
 
-func (execProjectCommandRunner) Run(ctx context.Context, dir, name string, args ...string) ([]byte, error) {
+func (execProjectCommandRunner) Run(ctx context.Context, dir string, stdout, stderr io.Writer, name string, args ...string) error {
 	command := exec.CommandContext(ctx, name, args...)
 	command.Dir = dir
-	return command.CombinedOutput()
+	command.Stdout = stdout
+	command.Stderr = stderr
+	return command.Run()
 }
 
-func (a *application) initializeRepository(ctx context.Context, project gogogo.Project, opts options, output io.Writer) error {
+func (a *application) initializeRepository(ctx context.Context, project gogogo.Project, opts options, output, errorOutput io.Writer) error {
 	if err := ensureGitMetadataAbsent(project.Destination); err != nil {
 		return err
 	}
 
 	runner := a.projectCommands()
-	if commandOutput, err := runner.Run(ctx, project.Destination, "git", "init"); err != nil {
-		return projectCommandContextError(ctx, "initialize Git repository", commandOutput, err)
+	run := func(timeout time.Duration, action, name string, args ...string) error {
+		return runProjectCommand(ctx, runner, timeout, action, project.Destination, output, errorOutput, name, args...)
+	}
+
+	fmt.Fprintln(output, "Initializing Git repository...")
+	if err := run(gitCommandTimeout, "initialize Git repository", "git", "init"); err != nil {
+		return err
 	}
 	fmt.Fprintln(output, "Initialized Git repository")
 
-	if commandOutput, err := runner.Run(ctx, project.Destination, "git", "add", "--all"); err != nil {
-		return projectCommandContextError(ctx, "stage project files", commandOutput, err)
+	fmt.Fprintln(output, "Creating initial commit...")
+	if err := run(gitCommandTimeout, "stage project files", "git", "add", "--all"); err != nil {
+		return err
 	}
-	if commandOutput, err := runner.Run(ctx, project.Destination, "git", "commit", "--allow-empty", "-m", "Initial commit"); err != nil {
-		return projectCommandContextError(ctx, "create initial commit", commandOutput, err)
+	if err := run(gitCommandTimeout, "create initial commit", "git", "commit", "--allow-empty", "-m", "Initial commit"); err != nil {
+		return err
 	}
 	fmt.Fprintln(output, "Created initial commit")
 
@@ -53,21 +67,19 @@ func (a *application) initializeRepository(ctx context.Context, project gogogo.P
 		return nil
 	}
 	if _, err := runner.LookPath("gh"); err != nil {
-		fmt.Fprintln(output, "Warning: GitHub repository was not created because gh was not found.")
-		fmt.Fprintln(output, "Install GitHub CLI from https://cli.github.com, then run gh repo create from the project directory.")
+		fmt.Fprintln(errorOutput, "Warning: GitHub repository was not created because gh was not found.")
+		fmt.Fprintln(errorOutput, "Install GitHub CLI from https://cli.github.com, then run gh repo create from the project directory.")
 		return nil
 	}
 
-	authOutput, err := runner.Run(ctx, project.Destination, "gh", "auth", "status", "--hostname", "github.com")
+	fmt.Fprintln(output, "Checking GitHub CLI authentication...")
+	err := run(ghAuthTimeout, "check GitHub CLI authentication", "gh", "auth", "status", "--hostname", "github.com")
 	if err != nil {
-		if ctx.Err() != nil {
-			return ctx.Err()
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return err
 		}
-		fmt.Fprintln(output, "Warning: GitHub repository was not created because gh is not authenticated.")
-		fmt.Fprintln(output, "Run gh auth login, then run gh repo create from the project directory.")
-		if detail := strings.TrimSpace(string(authOutput)); detail != "" {
-			fmt.Fprintf(output, "gh: %s\n", detail)
-		}
+		fmt.Fprintln(errorOutput, "Warning: GitHub repository was not created because gh is not authenticated.")
+		fmt.Fprintln(errorOutput, "Run gh auth login, then run gh repo create from the project directory.")
 		return nil
 	}
 
@@ -76,14 +88,11 @@ func (a *application) initializeRepository(ctx context.Context, project gogogo.P
 		repository = opts.githubOwner + "/" + repository
 	}
 	args := []string{"repo", "create", repository, "--" + opts.github, "--source=.", "--remote=origin", "--push"}
-	createOutput, err := runner.Run(ctx, project.Destination, "gh", args...)
-	if err != nil {
-		return projectCommandContextError(ctx, "create GitHub repository "+repository, createOutput, err)
+	fmt.Fprintf(output, "Creating %s GitHub repository %s and pushing the initial commit...\n", opts.github, repository)
+	if err := run(ghCreateTimeout, "create GitHub repository "+repository, "gh", args...); err != nil {
+		return err
 	}
 	fmt.Fprintf(output, "Created %s GitHub repository %s\n", opts.github, repository)
-	if repositoryURL := strings.TrimSpace(string(createOutput)); repositoryURL != "" {
-		fmt.Fprintln(output, repositoryURL)
-	}
 	return nil
 }
 
@@ -94,14 +103,21 @@ func (a *application) projectCommands() projectCommandRunner {
 	return execProjectCommandRunner{}
 }
 
-func projectCommandContextError(ctx context.Context, action string, output []byte, err error) error {
-	if ctx.Err() != nil {
-		return ctx.Err()
+func runProjectCommand(parent context.Context, runner projectCommandRunner, timeout time.Duration, action, dir string, stdout, stderr io.Writer, name string, args ...string) error {
+	ctx, cancel := context.WithTimeout(parent, timeout)
+	defer cancel()
+
+	if err := runner.Run(ctx, dir, stdout, stderr, name, args...); err != nil {
+		switch ctx.Err() {
+		case context.Canceled:
+			return context.Canceled
+		case context.DeadlineExceeded:
+			return fmt.Errorf("%s timed out after %s: %w", action, timeout, context.DeadlineExceeded)
+		default:
+			return fmt.Errorf("%s: %w", action, err)
+		}
 	}
-	if detail := strings.TrimSpace(string(output)); detail != "" {
-		return fmt.Errorf("%s: %w: %s", action, err, detail)
-	}
-	return fmt.Errorf("%s: %w", action, err)
+	return nil
 }
 
 func ensureGitMetadataAbsent(destination string) error {
