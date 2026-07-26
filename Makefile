@@ -1,4 +1,4 @@
-.PHONY: all build deps dev generate help test version
+.PHONY: all build deps dev generate help publish test version
 
 CHECK_FILES ?= $$(go list ./... | grep -v /vendor/)
 
@@ -29,3 +29,6 @@ version: ## Run goversion. Usage: make version bump="patch" [files="-file=README
 		exit 1; \
 	fi
 	go tool github.com/bcomnes/goversion/v2 $(files) $(bump)
+
+publish: ## Publish the current version. Usage: make publish [args="-dry"]
+	go tool github.com/bcomnes/goversion/v2 publish $(args)
