@@ -1,5 +1,7 @@
 # gogogo
 
+![gogogo logo](logo/gogogo-logo.png)
+
 [![Actions Status][action-img]][action-url]
 [![PkgGoDev][pkg-go-dev-img]][pkg-go-dev-url]
 
