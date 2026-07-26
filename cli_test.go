@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	gogogo "github.com/bcomnes/gogogo/pkg"
 )
@@ -169,7 +170,7 @@ func TestInitializeRepository(t *testing.T) {
 	runner := &testProjectCommandRunner{outputs: [][]byte{nil, nil, nil}}
 	app := &application{commands: runner}
 	var output bytes.Buffer
-	if err := app.initializeRepository(context.Background(), projectForTest(destination), options{}, &output); err != nil {
+	if err := app.initializeRepository(context.Background(), projectForTest(destination), options{}, &output, io.Discard); err != nil {
 		t.Fatalf("initializeRepository() error = %v", err)
 	}
 
@@ -191,7 +192,7 @@ func TestInitializeRepositoryCreatesGitHubRepository(t *testing.T) {
 	app := &application{commands: runner}
 	var output bytes.Buffer
 	opts := options{github: "public", githubOwner: "acme"}
-	if err := app.initializeRepository(context.Background(), projectForTest(destination), opts, &output); err != nil {
+	if err := app.initializeRepository(context.Background(), projectForTest(destination), opts, &output, io.Discard); err != nil {
 		t.Fatalf("initializeRepository() error = %v", err)
 	}
 
@@ -214,11 +215,12 @@ func TestInitializeRepositorySkipsUnavailableGitHubCLI(t *testing.T) {
 	runner := &testProjectCommandRunner{outputs: [][]byte{nil, nil, nil}, lookErr: errors.New("not found")}
 	app := &application{commands: runner}
 	var output bytes.Buffer
-	if err := app.initializeRepository(context.Background(), projectForTest(destination), options{github: "private"}, &output); err != nil {
+	var errorOutput bytes.Buffer
+	if err := app.initializeRepository(context.Background(), projectForTest(destination), options{github: "private"}, &output, &errorOutput); err != nil {
 		t.Fatalf("initializeRepository() error = %v", err)
 	}
-	if len(runner.calls) != 3 || !strings.Contains(output.String(), "gh was not found") {
-		t.Fatalf("calls = %#v, output = %q", runner.calls, output.String())
+	if len(runner.calls) != 3 || !strings.Contains(errorOutput.String(), "gh was not found") {
+		t.Fatalf("calls = %#v, stderr = %q", runner.calls, errorOutput.String())
 	}
 }
 
@@ -227,16 +229,26 @@ func TestInitializeRepositorySkipsUnauthenticatedGitHubCLI(t *testing.T) {
 
 	destination := t.TempDir()
 	runner := &testProjectCommandRunner{
-		outputs: [][]byte{nil, nil, nil, []byte("not logged in")},
-		errors:  []error{nil, nil, nil, errors.New("exit 1")},
+		errorOutputs: [][]byte{nil, nil, nil, []byte("not logged in")},
+		errors:       []error{nil, nil, nil, errors.New("exit 1")},
 	}
 	app := &application{commands: runner}
 	var output bytes.Buffer
-	if err := app.initializeRepository(context.Background(), projectForTest(destination), options{github: "private"}, &output); err != nil {
+	var errorOutput bytes.Buffer
+	if err := app.initializeRepository(context.Background(), projectForTest(destination), options{github: "private"}, &output, &errorOutput); err != nil {
 		t.Fatalf("initializeRepository() error = %v", err)
 	}
-	if len(runner.calls) != 4 || !strings.Contains(output.String(), "gh is not authenticated") || !strings.Contains(output.String(), "not logged in") {
-		t.Fatalf("calls = %#v, output = %q", runner.calls, output.String())
+	if len(runner.calls) != 4 || !strings.Contains(errorOutput.String(), "gh is not authenticated") || !strings.Contains(errorOutput.String(), "not logged in") {
+		t.Fatalf("calls = %#v, stdout = %q, stderr = %q", runner.calls, output.String(), errorOutput.String())
+	}
+}
+
+func TestRunProjectCommandTimesOut(t *testing.T) {
+	t.Parallel()
+
+	err := runProjectCommand(context.Background(), blockingProjectCommandRunner{}, time.Millisecond, "run slow command", t.TempDir(), io.Discard, io.Discard, "slow")
+	if !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "timed out after") {
+		t.Fatalf("runProjectCommand() error = %v", err)
 	}
 }
 
@@ -248,7 +260,7 @@ func TestInitializeRepositoryPropagatesCancellation(t *testing.T) {
 	cancel()
 	runner := &testProjectCommandRunner{errors: []error{errors.New("signal: killed")}}
 	app := &application{commands: runner}
-	if err := app.initializeRepository(ctx, projectForTest(destination), options{}, io.Discard); !errors.Is(err, context.Canceled) {
+	if err := app.initializeRepository(ctx, projectForTest(destination), options{}, io.Discard, io.Discard); !errors.Is(err, context.Canceled) {
 		t.Fatalf("initializeRepository() error = %v", err)
 	}
 }
@@ -262,7 +274,7 @@ func TestInitializeRepositoryRejectsTemplateGitMetadata(t *testing.T) {
 	}
 	runner := &testProjectCommandRunner{}
 	app := &application{commands: runner}
-	if err := app.initializeRepository(context.Background(), projectForTest(destination), options{}, io.Discard); err == nil || !strings.Contains(err.Error(), "template contains") {
+	if err := app.initializeRepository(context.Background(), projectForTest(destination), options{}, io.Discard, io.Discard); err == nil || !strings.Contains(err.Error(), "template contains") {
 		t.Fatalf("initializeRepository() error = %v", err)
 	}
 	if len(runner.calls) != 0 {
@@ -298,11 +310,12 @@ type testProjectCommand struct {
 }
 
 type testProjectCommandRunner struct {
-	calls    []testProjectCommand
-	outputs  [][]byte
-	errors   []error
-	lookErr  error
-	lookedUp string
+	calls        []testProjectCommand
+	outputs      [][]byte
+	errors       []error
+	errorOutputs [][]byte
+	lookErr      error
+	lookedUp     string
 }
 
 func (runner *testProjectCommandRunner) LookPath(name string) (string, error) {
@@ -313,18 +326,30 @@ func (runner *testProjectCommandRunner) LookPath(name string) (string, error) {
 	return "/usr/local/bin/" + name, nil
 }
 
-func (runner *testProjectCommandRunner) Run(_ context.Context, dir, name string, args ...string) ([]byte, error) {
+func (runner *testProjectCommandRunner) Run(_ context.Context, dir string, stdout, stderr io.Writer, name string, args ...string) error {
 	index := len(runner.calls)
 	runner.calls = append(runner.calls, testProjectCommand{dir: dir, name: name, args: append([]string(nil), args...)})
-	var output []byte
 	if index < len(runner.outputs) {
-		output = runner.outputs[index]
+		_, _ = stdout.Write(runner.outputs[index])
 	}
-	var err error
+	if index < len(runner.errorOutputs) {
+		_, _ = stderr.Write(runner.errorOutputs[index])
+	}
 	if index < len(runner.errors) {
-		err = runner.errors[index]
+		return runner.errors[index]
 	}
-	return output, err
+	return nil
+}
+
+type blockingProjectCommandRunner struct{}
+
+func (blockingProjectCommandRunner) LookPath(string) (string, error) {
+	return "", nil
+}
+
+func (blockingProjectCommandRunner) Run(ctx context.Context, _ string, _, _ io.Writer, _ string, _ ...string) error {
+	<-ctx.Done()
+	return ctx.Err()
 }
 
 func assertProjectCommands(t *testing.T, actual []testProjectCommand, destination string, expected []testProjectCommand) {
