@@ -44,17 +44,21 @@ func (a *application) initializeRepository(ctx context.Context, project gogogo.P
 	}
 
 	runner := a.projectCommands()
+	run := func(timeout time.Duration, action, name string, args ...string) error {
+		return runProjectCommand(ctx, runner, timeout, action, project.Destination, output, errorOutput, name, args...)
+	}
+
 	fmt.Fprintln(output, "Initializing Git repository...")
-	if err := runProjectCommand(ctx, runner, gitCommandTimeout, "initialize Git repository", project.Destination, output, errorOutput, "git", "init"); err != nil {
+	if err := run(gitCommandTimeout, "initialize Git repository", "git", "init"); err != nil {
 		return err
 	}
 	fmt.Fprintln(output, "Initialized Git repository")
 
 	fmt.Fprintln(output, "Creating initial commit...")
-	if err := runProjectCommand(ctx, runner, gitCommandTimeout, "stage project files", project.Destination, output, errorOutput, "git", "add", "--all"); err != nil {
+	if err := run(gitCommandTimeout, "stage project files", "git", "add", "--all"); err != nil {
 		return err
 	}
-	if err := runProjectCommand(ctx, runner, gitCommandTimeout, "create initial commit", project.Destination, output, errorOutput, "git", "commit", "--allow-empty", "-m", "Initial commit"); err != nil {
+	if err := run(gitCommandTimeout, "create initial commit", "git", "commit", "--allow-empty", "-m", "Initial commit"); err != nil {
 		return err
 	}
 	fmt.Fprintln(output, "Created initial commit")
@@ -69,7 +73,7 @@ func (a *application) initializeRepository(ctx context.Context, project gogogo.P
 	}
 
 	fmt.Fprintln(output, "Checking GitHub CLI authentication...")
-	err := runProjectCommand(ctx, runner, ghAuthTimeout, "check GitHub CLI authentication", project.Destination, output, errorOutput, "gh", "auth", "status", "--hostname", "github.com")
+	err := run(ghAuthTimeout, "check GitHub CLI authentication", "gh", "auth", "status", "--hostname", "github.com")
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return err
@@ -85,7 +89,7 @@ func (a *application) initializeRepository(ctx context.Context, project gogogo.P
 	}
 	args := []string{"repo", "create", repository, "--" + opts.github, "--source=.", "--remote=origin", "--push"}
 	fmt.Fprintf(output, "Creating %s GitHub repository %s and pushing the initial commit...\n", opts.github, repository)
-	if err := runProjectCommand(ctx, runner, ghCreateTimeout, "create GitHub repository "+repository, project.Destination, output, errorOutput, "gh", args...); err != nil {
+	if err := run(ghCreateTimeout, "create GitHub repository "+repository, "gh", args...); err != nil {
 		return err
 	}
 	fmt.Fprintf(output, "Created %s GitHub repository %s\n", opts.github, repository)
@@ -104,13 +108,14 @@ func runProjectCommand(parent context.Context, runner projectCommandRunner, time
 	defer cancel()
 
 	if err := runner.Run(ctx, dir, stdout, stderr, name, args...); err != nil {
-		if errors.Is(ctx.Err(), context.Canceled) {
+		switch ctx.Err() {
+		case context.Canceled:
 			return context.Canceled
-		}
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		case context.DeadlineExceeded:
 			return fmt.Errorf("%s timed out after %s: %w", action, timeout, context.DeadlineExceeded)
+		default:
+			return fmt.Errorf("%s: %w", action, err)
 		}
-		return fmt.Errorf("%s: %w", action, err)
 	}
 	return nil
 }

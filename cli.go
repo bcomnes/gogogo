@@ -78,7 +78,6 @@ func newApplication() *application {
 		client:          &http.Client{Timeout: 5 * time.Minute},
 		configPath:      configPath,
 		configPathError: err,
-		commands:        execProjectCommandRunner{},
 	}
 }
 
