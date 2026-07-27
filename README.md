@@ -85,6 +85,7 @@ gogogo -github=public -github-owner=my-org my-project
 ```
 
 The owner defaults to the user authenticated by `gh`.
+An explicit `-github` flag overrides any configured default, while `-no-github` creates only the local Git repository for that run.
 Git and `gh` output is streamed while each command runs, and command deadlines prevent stalled authentication or pushes from hanging indefinitely.
 If `gh` is missing or unauthenticated, the local repository is still created and `gogogo` prints instructions for finishing the GitHub setup later.
 
@@ -107,11 +108,28 @@ Binary files are detected from their media type and complete contents, then copi
 
 ### Configuration
 
-Set a default repository and default template parameters interactively:
+Set a default template repository, GitHub visibility, and template parameters interactively:
 
 ```console
 gogogo -configure
 ```
+
+GitHub repository creation remains disabled by default.
+Opt in non-interactively by setting a default visibility:
+
+```console
+gogogo -default-github=private
+gogogo -default-github=public
+```
+
+Use `internal` for organizations that support internal repositories, or clear the setting with:
+
+```console
+gogogo -default-github=none
+```
+
+With a configured default, `gogogo my-project` creates and pushes the GitHub repository automatically.
+Use `gogogo -no-github my-project` for a one-run local-only override.
 
 Configuration is stored in `~/.config/gogogo.json` by default.
 Set `GOGOGO_CONFIG` to use a different configuration path.

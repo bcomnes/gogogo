@@ -27,16 +27,18 @@ type application struct {
 }
 
 type options struct {
-	configure   bool
-	help        bool
-	version     bool
-	file        string
-	url         string
-	github      string
-	githubOwner string
-	noGit       bool
-	values      parameterFlags
-	positionals []string
+	configure     bool
+	help          bool
+	version       bool
+	file          string
+	url           string
+	github        string
+	githubOwner   string
+	defaultGitHub string
+	noGit         bool
+	noGitHub      bool
+	values        parameterFlags
+	positionals   []string
 }
 
 type parameterFlags map[string]string
@@ -109,8 +111,30 @@ func (a *application) run(ctx context.Context, arguments []string, input io.Read
 		fmt.Fprintf(errorOutput, "Error: %v\n", a.configPathError)
 		return 1
 	}
+	if opts.defaultGitHub != "" {
+		if len(opts.positionals) != 0 || opts.configure || opts.file != "" || opts.url != "" || opts.github != "" || opts.githubOwner != "" || opts.noGit || opts.noGitHub || len(opts.values) != 0 {
+			fmt.Fprintln(errorOutput, "Error: -default-github cannot be combined with other project or configuration options")
+			return 2
+		}
+		visibility, err := parseConfiguredGitHubVisibility(opts.defaultGitHub)
+		if err != nil {
+			fmt.Fprintf(errorOutput, "Error: %v\n", err)
+			return 2
+		}
+		cfg.GitHubVisibility = visibility
+		if err := saveConfig(a.configPath, cfg); err != nil {
+			fmt.Fprintf(errorOutput, "Error: %v\n", err)
+			return 1
+		}
+		if visibility == "" {
+			fmt.Fprintln(output, "Default GitHub repository creation disabled")
+		} else {
+			fmt.Fprintf(output, "Default GitHub visibility set to %s\n", visibility)
+		}
+		return 0
+	}
 	if opts.configure {
-		if len(opts.positionals) != 0 || opts.file != "" || opts.url != "" || len(opts.values) != 0 {
+		if len(opts.positionals) != 0 || opts.file != "" || opts.url != "" || opts.github != "" || opts.githubOwner != "" || opts.noGit || opts.noGitHub || len(opts.values) != 0 {
 			fmt.Fprintln(errorOutput, "Error: -configure cannot be combined with project arguments")
 			return 2
 		}
@@ -126,6 +150,11 @@ func (a *application) run(ctx context.Context, arguments []string, input io.Read
 		return 2
 	}
 
+	opts, err = resolveGitHubOptions(opts, cfg)
+	if err != nil {
+		fmt.Fprintf(errorOutput, "Error: %v\n", err)
+		return 2
+	}
 	if err := a.createProject(ctx, opts, cfg, output, errorOutput); err != nil {
 		fmt.Fprintf(errorOutput, "Error: %v\n", err)
 		if errors.Is(err, context.Canceled) {
@@ -251,8 +280,8 @@ func parseOptions(arguments []string) (options, error) {
 	if opts.noGit && opts.github != "" {
 		return options{}, fmt.Errorf("-no-git and -github are mutually exclusive")
 	}
-	if opts.githubOwner != "" && opts.github == "" {
-		return options{}, fmt.Errorf("-github-owner requires -github")
+	if opts.noGitHub && opts.github != "" {
+		return options{}, fmt.Errorf("-no-github and -github are mutually exclusive")
 	}
 	switch opts.github {
 	case "", "private", "public", "internal":
@@ -262,15 +291,30 @@ func parseOptions(arguments []string) (options, error) {
 	return opts, nil
 }
 
+func resolveGitHubOptions(opts options, cfg config) (options, error) {
+	switch {
+	case opts.noGit || opts.noGitHub:
+		opts.github = ""
+	case opts.github == "":
+		opts.github = cfg.GitHubVisibility
+	}
+	if opts.githubOwner != "" && opts.github == "" {
+		return options{}, fmt.Errorf("-github-owner requires GitHub repository creation")
+	}
+	return opts, nil
+}
+
 func newFlagSet(opts *options, output io.Writer) *flag.FlagSet {
 	flags := flag.NewFlagSet(commandName, flag.ContinueOnError)
 	flags.SetOutput(output)
-	flags.BoolVar(&opts.configure, "configure", false, "Set the default repository and parameters")
+	flags.BoolVar(&opts.configure, "configure", false, "Set the default repository, GitHub visibility, and parameters")
+	flags.StringVar(&opts.defaultGitHub, "default-github", "", "Set default GitHub visibility and exit: none, private, public, or internal")
 	flags.StringVar(&opts.file, "file", "", "Read a local .tar or .tar.gz template")
 	flags.StringVar(&opts.github, "github", "", "Create and push a GitHub repository: private, public, or internal")
 	flags.StringVar(&opts.githubOwner, "github-owner", "", "GitHub user or organization; defaults to the authenticated user")
 	flags.BoolVar(&opts.help, "help", false, "Show this help message and exit")
 	flags.BoolVar(&opts.noGit, "no-git", false, "Do not initialize a local Git repository")
+	flags.BoolVar(&opts.noGitHub, "no-github", false, "Do not create a GitHub repository for this project")
 	flags.Var(&opts.values, "set", "Set a template parameter as key=value; may be repeated")
 	flags.StringVar(&opts.url, "url", "", "Download a .tar or .tar.gz template")
 	flags.BoolVar(&opts.version, "version", false, "Show the CLI version and exit")
@@ -302,6 +346,12 @@ Options:
 	opts := options{values: make(parameterFlags)}
 	flags := newFlagSet(&opts, output)
 	flags.PrintDefaults()
+
+	visibility := cfg.GitHubVisibility
+	if visibility == "" {
+		visibility = "none"
+	}
+	fmt.Fprintf(output, "\nConfigured GitHub visibility: %s\n", visibility)
 
 	if len(cfg.Defaults) > 0 {
 		keys := make([]string, 0, len(cfg.Defaults))

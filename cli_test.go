@@ -49,12 +49,81 @@ func TestParseOptionsRejectsInvalidRepositoryOptions(t *testing.T) {
 
 	for _, arguments := range [][]string{
 		{"-github=secret", "example"},
-		{"-github-owner=acme", "example"},
 		{"-no-git", "-github=private", "example"},
+		{"-no-github", "-github=private", "example"},
 	} {
 		if _, err := parseOptions(arguments); err == nil {
 			t.Errorf("parseOptions(%q) unexpectedly succeeded", arguments)
 		}
+	}
+}
+
+func TestResolveGitHubOptions(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		opts       options
+		visibility string
+		want       string
+		wantError  bool
+	}{
+		{name: "configured default", visibility: "private", want: "private"},
+		{name: "explicit override", opts: options{github: "public"}, visibility: "private", want: "public"},
+		{name: "per-run opt out", opts: options{noGitHub: true}, visibility: "private"},
+		{name: "no git implies no GitHub", opts: options{noGit: true}, visibility: "private"},
+		{name: "owner uses configured default", opts: options{githubOwner: "acme"}, visibility: "private", want: "private"},
+		{name: "owner without repository creation", opts: options{githubOwner: "acme"}, wantError: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			resolved, err := resolveGitHubOptions(test.opts, config{GitHubVisibility: test.visibility})
+			if test.wantError {
+				if err == nil {
+					t.Fatal("resolveGitHubOptions() unexpectedly succeeded")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("resolveGitHubOptions() error = %v", err)
+			}
+			if resolved.github != test.want {
+				t.Fatalf("github visibility = %q, want %q", resolved.github, test.want)
+			}
+		})
+	}
+}
+
+func TestApplicationSetsDefaultGitHubVisibility(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	app := &application{client: http.DefaultClient, configPath: path}
+	for _, test := range []struct {
+		value string
+		want  string
+	}{
+		{value: "private", want: "private"},
+		{value: "none", want: ""},
+	} {
+		var output bytes.Buffer
+		var errorOutput bytes.Buffer
+		exitCode := app.run(context.Background(), []string{"-default-github=" + test.value}, strings.NewReader(""), &output, &errorOutput)
+		if exitCode != 0 {
+			t.Fatalf("run(-default-github=%s) exit code = %d, stderr = %q", test.value, exitCode, errorOutput.String())
+		}
+		cfg, err := loadConfig(path)
+		if err != nil {
+			t.Fatalf("loadConfig() error = %v", err)
+		}
+		if cfg.GitHubVisibility != test.want {
+			t.Fatalf("configured visibility = %q, want %q", cfg.GitHubVisibility, test.want)
+		}
+	}
+
+	var errorOutput bytes.Buffer
+	if exitCode := app.run(context.Background(), []string{"-default-github=secret"}, strings.NewReader(""), io.Discard, &errorOutput); exitCode != 2 {
+		t.Fatalf("invalid visibility exit code = %d, stderr = %q", exitCode, errorOutput.String())
 	}
 }
 
@@ -67,7 +136,9 @@ func TestApplicationHelp(t *testing.T) {
 	if exitCode != 0 {
 		t.Fatalf("run() exit code = %d", exitCode)
 	}
-	if !strings.Contains(output.String(), "Usage:") || !strings.Contains(output.String(), "-set value") {
+	if !strings.Contains(output.String(), "Usage:") ||
+		!strings.Contains(output.String(), "-set value") ||
+		!strings.Contains(output.String(), "Configured GitHub visibility: none") {
 		t.Fatalf("help output = %q", output.String())
 	}
 }
@@ -111,6 +182,45 @@ func TestApplicationCreatesProjectFromFile(t *testing.T) {
 		!strings.Contains(output.String(), "Initializing Git repository...") ||
 		!strings.Contains(output.String(), "Created initial commit") {
 		t.Fatalf("stdout = %q", output.String())
+	}
+	runner.done()
+}
+
+func TestApplicationUsesConfiguredGitHubVisibility(t *testing.T) {
+	t.Parallel()
+
+	temporaryDirectory := t.TempDir()
+	archivePath := filepath.Join(temporaryDirectory, "template.tar")
+	archive := makeTestArchive(t, false, []testArchiveEntry{
+		{name: "template/README.md", body: "# __name__\n", mode: 0o644, typeflag: tar.TypeReg},
+	})
+	if err := os.WriteFile(archivePath, archive, 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	configPath := filepath.Join(temporaryDirectory, "config.json")
+	cfg := defaultConfig()
+	cfg.GitHubVisibility = "private"
+	if err := saveConfig(configPath, cfg); err != nil {
+		t.Fatalf("saveConfig() error = %v", err)
+	}
+
+	commands := localGitCommandSteps()
+	commands = append(commands,
+		testProjectCommand{name: "gh", args: []string{"auth", "status", "--hostname", "github.com"}},
+		testProjectCommand{name: "gh", args: []string{"repo", "create", "example", "--private", "--source=.", "--remote=origin", "--push"}},
+	)
+	runner := newTestProjectCommandRunner(t, commands...)
+	app := &application{client: http.DefaultClient, configPath: configPath, commands: runner}
+	var errorOutput bytes.Buffer
+	exitCode := app.run(
+		context.Background(),
+		[]string{"-file", archivePath, filepath.Join(temporaryDirectory, "example")},
+		strings.NewReader(""),
+		io.Discard,
+		&errorOutput,
+	)
+	if exitCode != 0 {
+		t.Fatalf("run() exit code = %d, stderr = %q", exitCode, errorOutput.String())
 	}
 	runner.done()
 }
@@ -162,7 +272,7 @@ func TestConfigureAndLoad(t *testing.T) {
 	t.Parallel()
 
 	path := filepath.Join(t.TempDir(), "nested", "config.json")
-	input := strings.NewReader("owner/template#main\nowner=bret\n\n")
+	input := strings.NewReader("owner/template#main\nprivate\nowner=bret\n\n")
 	if err := configure(input, io.Discard, path, defaultConfig()); err != nil {
 		t.Fatalf("configure() error = %v", err)
 	}
@@ -173,6 +283,9 @@ func TestConfigureAndLoad(t *testing.T) {
 	}
 	if cfg.GitHub.String() != "owner/template#main" {
 		t.Fatalf("repository = %q", cfg.GitHub.String())
+	}
+	if cfg.GitHubVisibility != "private" {
+		t.Fatalf("GitHub visibility = %q", cfg.GitHubVisibility)
 	}
 	if cfg.Defaults["owner"] != "bret" {
 		t.Fatalf("defaults = %#v", cfg.Defaults)
