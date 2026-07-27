@@ -15,8 +15,10 @@ import (
 )
 
 type config struct {
-	GitHub   gogogo.Repository `json:"github"`
-	Defaults map[string]string `json:"defaults"`
+	GitHub           gogogo.Repository `json:"github"`
+	GitHubVisibility string            `json:"github_visibility,omitempty"`
+	GitHubOwner      string            `json:"github_owner,omitempty"`
+	Defaults         map[string]string `json:"defaults"`
 }
 
 func defaultConfig() config {
@@ -67,6 +69,16 @@ func loadConfig(path string) (config, error) {
 	if _, err := gogogo.ParseRepository(cfg.GitHub.String()); err != nil {
 		return config{}, fmt.Errorf("invalid configured repository: %w", err)
 	}
+	visibility, err := parseConfiguredGitHubVisibility(cfg.GitHubVisibility)
+	if err != nil {
+		return config{}, err
+	}
+	cfg.GitHubVisibility = visibility
+	owner, err := parseConfiguredGitHubOwner(cfg.GitHubOwner)
+	if err != nil {
+		return config{}, err
+	}
+	cfg.GitHubOwner = owner
 
 	return cfg, nil
 }
@@ -128,6 +140,40 @@ func configure(input io.Reader, output io.Writer, path string, cfg config) error
 		cfg.GitHub = repo
 	}
 
+	if !eof {
+		defaultVisibility := cfg.GitHubVisibility
+		if defaultVisibility == "" {
+			defaultVisibility = "none"
+		}
+		line, reachedEOF, err := prompt(reader, output, "Default GitHub visibility (none/private/public/internal)", defaultVisibility)
+		if err != nil {
+			return err
+		}
+		eof = reachedEOF
+		visibility, err := parseConfiguredGitHubVisibility(line)
+		if err != nil {
+			return err
+		}
+		cfg.GitHubVisibility = visibility
+	}
+
+	if !eof {
+		defaultOwner := cfg.GitHubOwner
+		if defaultOwner == "" {
+			defaultOwner = "none"
+		}
+		line, reachedEOF, err := prompt(reader, output, "Default GitHub owner (none for authenticated user)", defaultOwner)
+		if err != nil {
+			return err
+		}
+		eof = reachedEOF
+		owner, err := parseConfiguredGitHubOwner(line)
+		if err != nil {
+			return err
+		}
+		cfg.GitHubOwner = owner
+	}
+
 	keys := make([]string, 0, len(cfg.Defaults))
 	for key := range cfg.Defaults {
 		keys = append(keys, key)
@@ -168,6 +214,30 @@ func configure(input io.Reader, output io.Writer, path string, cfg config) error
 	}
 	fmt.Fprintf(output, "Configuration saved to %s\n", path)
 	return nil
+}
+
+func parseConfiguredGitHubVisibility(value string) (string, error) {
+	visibility := strings.ToLower(strings.TrimSpace(value))
+	switch visibility {
+	case "", "none":
+		return "", nil
+	case "private", "public", "internal":
+		return visibility, nil
+	default:
+		return "", fmt.Errorf("GitHub visibility must be none, private, public, or internal")
+	}
+}
+
+func parseConfiguredGitHubOwner(value string) (string, error) {
+	owner := strings.TrimSpace(value)
+	if owner == "" || strings.EqualFold(owner, "none") {
+		return "", nil
+	}
+	repo, err := gogogo.ParseRepository(owner + "/repository")
+	if err != nil || repo.User != owner {
+		return "", fmt.Errorf("GitHub owner %q is invalid", value)
+	}
+	return owner, nil
 }
 
 func prompt(reader *bufio.Reader, output io.Writer, label, defaultValue string) (string, bool, error) {

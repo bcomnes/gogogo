@@ -85,6 +85,7 @@ gogogo -github=public -github-owner=my-org my-project
 ```
 
 The owner defaults to the user authenticated by `gh`.
+An explicit `-github` flag overrides any configured default, while `-no-github` creates only the local Git repository for that run.
 Git and `gh` output is streamed while each command runs, and command deadlines prevent stalled authentication or pushes from hanging indefinitely.
 If `gh` is missing or unauthenticated, the local repository is still created and `gogogo` prints instructions for finishing the GitHub setup later.
 
@@ -107,11 +108,31 @@ Binary files are detected from their media type and complete contents, then copi
 
 ### Configuration
 
-Set a default repository and default template parameters interactively:
+Inspect and update configuration non-interactively with the `config` subcommand:
+
+```console
+gogogo config show
+gogogo config path
+gogogo config set template bcomnes/go-template#master
+gogogo config set github.visibility private
+gogogo config set github.owner my-org
+gogogo config set parameter.license MIT
+gogogo config unset parameter.license
+```
+
+Supported keys are `template`, `github.visibility`, `github.owner`, and `parameter.<name>`.
+Unset `template` to restore the built-in template, or unset GitHub settings to restore local-only creation under the authenticated GitHub user.
+GitHub visibility accepts `none`, `private`, `public`, or `internal`.
+
+The interactive configuration flow remains available:
 
 ```console
 gogogo -configure
 ```
+
+The existing `gogogo -default-github=private` shorthand remains available for setting visibility, while `gogogo -default-github=none` clears it.
+With a configured visibility, `gogogo my-project` creates and pushes the GitHub repository automatically.
+An explicit `-github` or `-github-owner` overrides configured values, and `gogogo -no-github my-project` provides a one-run local-only override.
 
 Configuration is stored in `~/.config/gogogo.json` by default.
 Set `GOGOGO_CONFIG` to use a different configuration path.
