@@ -84,6 +84,10 @@ func newApplication() *application {
 }
 
 func (a *application) run(ctx context.Context, arguments []string, input io.Reader, output, errorOutput io.Writer) int {
+	if len(arguments) > 0 && arguments[0] == "config" {
+		return a.runConfig(arguments[1:], output, errorOutput)
+	}
+
 	opts, err := parseOptions(arguments)
 	if err != nil {
 		fmt.Fprintf(errorOutput, "Error: %v\n\n", err)
@@ -301,6 +305,9 @@ func resolveGitHubOptions(opts options, cfg config) (options, error) {
 	if opts.githubOwner != "" && opts.github == "" {
 		return options{}, fmt.Errorf("-github-owner requires GitHub repository creation")
 	}
+	if opts.github != "" && opts.githubOwner == "" {
+		opts.githubOwner = cfg.GitHubOwner
+	}
 	return opts, nil
 }
 
@@ -324,6 +331,7 @@ func newFlagSet(opts *options, output io.Writer) *flag.FlagSet {
 func printUsage(output io.Writer, cfg config) {
 	fmt.Fprintf(output, `Usage:
   gogogo [options] <name> [%s]
+  gogogo config <show|path|set|unset> ...
 
 Create a project from a GitHub repository, local tar archive, or URL.
 Flags must be specified before the project name.
@@ -333,6 +341,8 @@ Examples:
   gogogo -set owner=bcomnes my-project
   gogogo -github=private my-project
   gogogo -github=public -github-owner=my-org my-project
+  gogogo config set github.visibility private
+  gogogo config show
   gogogo my-project owner/template#main
   gogogo -file template.tar.gz my-project
 
@@ -352,6 +362,11 @@ Options:
 		visibility = "none"
 	}
 	fmt.Fprintf(output, "\nConfigured GitHub visibility: %s\n", visibility)
+	owner := cfg.GitHubOwner
+	if owner == "" {
+		owner = "authenticated user"
+	}
+	fmt.Fprintf(output, "Configured GitHub owner: %s\n", owner)
 
 	if len(cfg.Defaults) > 0 {
 		keys := make([]string, 0, len(cfg.Defaults))

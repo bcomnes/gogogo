@@ -65,19 +65,22 @@ func TestResolveGitHubOptions(t *testing.T) {
 		name       string
 		opts       options
 		visibility string
+		owner      string
 		want       string
+		wantOwner  string
 		wantError  bool
 	}{
 		{name: "configured default", visibility: "private", want: "private"},
 		{name: "explicit override", opts: options{github: "public"}, visibility: "private", want: "public"},
 		{name: "per-run opt out", opts: options{noGitHub: true}, visibility: "private"},
 		{name: "no git implies no GitHub", opts: options{noGit: true}, visibility: "private"},
-		{name: "owner uses configured default", opts: options{githubOwner: "acme"}, visibility: "private", want: "private"},
+		{name: "configured owner", visibility: "private", owner: "acme", want: "private", wantOwner: "acme"},
+		{name: "explicit owner override", opts: options{githubOwner: "other"}, visibility: "private", owner: "acme", want: "private", wantOwner: "other"},
 		{name: "owner without repository creation", opts: options{githubOwner: "acme"}, wantError: true},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			resolved, err := resolveGitHubOptions(test.opts, config{GitHubVisibility: test.visibility})
+			resolved, err := resolveGitHubOptions(test.opts, config{GitHubVisibility: test.visibility, GitHubOwner: test.owner})
 			if test.wantError {
 				if err == nil {
 					t.Fatal("resolveGitHubOptions() unexpectedly succeeded")
@@ -87,8 +90,8 @@ func TestResolveGitHubOptions(t *testing.T) {
 			if err != nil {
 				t.Fatalf("resolveGitHubOptions() error = %v", err)
 			}
-			if resolved.github != test.want {
-				t.Fatalf("github visibility = %q, want %q", resolved.github, test.want)
+			if resolved.github != test.want || resolved.githubOwner != test.wantOwner {
+				t.Fatalf("resolved GitHub options = visibility %q owner %q, want visibility %q owner %q", resolved.github, resolved.githubOwner, test.want, test.wantOwner)
 			}
 		})
 	}
@@ -200,6 +203,7 @@ func TestApplicationUsesConfiguredGitHubVisibility(t *testing.T) {
 	configPath := filepath.Join(temporaryDirectory, "config.json")
 	cfg := defaultConfig()
 	cfg.GitHubVisibility = "private"
+	cfg.GitHubOwner = "acme"
 	if err := saveConfig(configPath, cfg); err != nil {
 		t.Fatalf("saveConfig() error = %v", err)
 	}
@@ -207,7 +211,7 @@ func TestApplicationUsesConfiguredGitHubVisibility(t *testing.T) {
 	commands := localGitCommandSteps()
 	commands = append(commands,
 		testProjectCommand{name: "gh", args: []string{"auth", "status", "--hostname", "github.com"}},
-		testProjectCommand{name: "gh", args: []string{"repo", "create", "example", "--private", "--source=.", "--remote=origin", "--push"}},
+		testProjectCommand{name: "gh", args: []string{"repo", "create", "acme/example", "--private", "--source=.", "--remote=origin", "--push"}},
 	)
 	runner := newTestProjectCommandRunner(t, commands...)
 	app := &application{client: http.DefaultClient, configPath: configPath, commands: runner}
@@ -272,7 +276,7 @@ func TestConfigureAndLoad(t *testing.T) {
 	t.Parallel()
 
 	path := filepath.Join(t.TempDir(), "nested", "config.json")
-	input := strings.NewReader("owner/template#main\nprivate\nowner=bret\n\n")
+	input := strings.NewReader("owner/template#main\nprivate\nacme\nowner=bret\n\n")
 	if err := configure(input, io.Discard, path, defaultConfig()); err != nil {
 		t.Fatalf("configure() error = %v", err)
 	}
@@ -286,6 +290,9 @@ func TestConfigureAndLoad(t *testing.T) {
 	}
 	if cfg.GitHubVisibility != "private" {
 		t.Fatalf("GitHub visibility = %q", cfg.GitHubVisibility)
+	}
+	if cfg.GitHubOwner != "acme" {
+		t.Fatalf("GitHub owner = %q", cfg.GitHubOwner)
 	}
 	if cfg.Defaults["owner"] != "bret" {
 		t.Fatalf("defaults = %#v", cfg.Defaults)

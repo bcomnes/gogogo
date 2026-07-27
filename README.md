@@ -108,28 +108,31 @@ Binary files are detected from their media type and complete contents, then copi
 
 ### Configuration
 
-Set a default template repository, GitHub visibility, and template parameters interactively:
+Inspect and update configuration non-interactively with the `config` subcommand:
+
+```console
+gogogo config show
+gogogo config path
+gogogo config set template bcomnes/go-template#master
+gogogo config set github.visibility private
+gogogo config set github.owner my-org
+gogogo config set parameter.license MIT
+gogogo config unset parameter.license
+```
+
+Supported keys are `template`, `github.visibility`, `github.owner`, and `parameter.<name>`.
+Unset `template` to restore the built-in template, or unset GitHub settings to restore local-only creation under the authenticated GitHub user.
+GitHub visibility accepts `none`, `private`, `public`, or `internal`.
+
+The interactive configuration flow remains available:
 
 ```console
 gogogo -configure
 ```
 
-GitHub repository creation remains disabled by default.
-Opt in non-interactively by setting a default visibility:
-
-```console
-gogogo -default-github=private
-gogogo -default-github=public
-```
-
-Use `internal` for organizations that support internal repositories, or clear the setting with:
-
-```console
-gogogo -default-github=none
-```
-
-With a configured default, `gogogo my-project` creates and pushes the GitHub repository automatically.
-Use `gogogo -no-github my-project` for a one-run local-only override.
+The existing `gogogo -default-github=private` shorthand remains available for setting visibility, while `gogogo -default-github=none` clears it.
+With a configured visibility, `gogogo my-project` creates and pushes the GitHub repository automatically.
+An explicit `-github` or `-github-owner` overrides configured values, and `gogogo -no-github my-project` provides a one-run local-only override.
 
 Configuration is stored in `~/.config/gogogo.json` by default.
 Set `GOGOGO_CONFIG` to use a different configuration path.
