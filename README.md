@@ -187,3 +187,5 @@ Repository strings can be parsed with `gogogo.ParseRepository`, and `Repository.
 ## License
 
 MIT
+
+![gogogo og](logo/download-1.jpg)
