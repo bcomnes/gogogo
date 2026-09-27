@@ -6,9 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/bcomnes/gogogo/pkg"
@@ -174,11 +175,7 @@ func configure(input io.Reader, output io.Writer, path string, cfg config) error
 		cfg.GitHubOwner = owner
 	}
 
-	keys := make([]string, 0, len(cfg.Defaults))
-	for key := range cfg.Defaults {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
+	keys := slices.Sorted(maps.Keys(cfg.Defaults))
 
 	for index := 0; !eof; index++ {
 		defaultValue := ""

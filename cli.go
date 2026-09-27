@@ -6,11 +6,12 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -47,11 +48,7 @@ func (parameters *parameterFlags) String() string {
 	if parameters == nil || len(*parameters) == 0 {
 		return ""
 	}
-	keys := make([]string, 0, len(*parameters))
-	for key := range *parameters {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
+	keys := slices.Sorted(maps.Keys(*parameters))
 
 	assignments := make([]string, 0, len(keys))
 	for _, key := range keys {
@@ -116,7 +113,7 @@ func (a *application) run(ctx context.Context, arguments []string, input io.Read
 		return 1
 	}
 	if opts.defaultGitHub != "" {
-		if len(opts.positionals) != 0 || opts.configure || opts.file != "" || opts.url != "" || opts.github != "" || opts.githubOwner != "" || opts.noGit || opts.noGitHub || len(opts.values) != 0 {
+		if opts.configure || opts.hasProjectArguments() {
 			fmt.Fprintln(errorOutput, "Error: -default-github cannot be combined with other project or configuration options")
 			return 2
 		}
@@ -138,7 +135,7 @@ func (a *application) run(ctx context.Context, arguments []string, input io.Read
 		return 0
 	}
 	if opts.configure {
-		if len(opts.positionals) != 0 || opts.file != "" || opts.url != "" || opts.github != "" || opts.githubOwner != "" || opts.noGit || opts.noGitHub || len(opts.values) != 0 {
+		if opts.hasProjectArguments() {
 			fmt.Fprintln(errorOutput, "Error: -configure cannot be combined with project arguments")
 			return 2
 		}
@@ -180,46 +177,15 @@ func (a *application) createProject(ctx context.Context, opts options, cfg confi
 	destination := opts.positionals[0]
 	projectName := filepath.Base(filepath.Clean(destination))
 
-	var source io.ReadCloser
-	var sourceLabel string
-	var err error
-	switch {
-	case opts.file != "":
-		source, err = os.Open(opts.file)
-		sourceLabel = opts.file
-	case opts.url != "":
-		sourceLabel = opts.url
-		fmt.Fprintf(output, "Downloading template from %s...\n", sourceLabel)
-		source, err = a.openURL(ctx, opts.url)
-	default:
-		repo := cfg.GitHub
-		if len(opts.positionals) == 2 {
-			repositoryArgument := opts.positionals[1]
-			if !strings.Contains(repositoryArgument, "/") {
-				repo.Branch = repositoryArgument
-			} else {
-				repo, err = gogogo.ParseRepository(repositoryArgument)
-				if err != nil {
-					return fmt.Errorf("parse repository: %w", err)
-				}
-			}
-		}
-		sourceLabel = repo.String()
-		fmt.Fprintf(output, "Downloading template from %s...\n", sourceLabel)
-		source, err = a.openURL(ctx, repo.ArchiveURL())
-	}
+	source, sourceLabel, err := a.openTemplate(ctx, opts, cfg, output)
 	if err != nil {
-		return fmt.Errorf("open template %s: %w", sourceLabel, err)
+		return err
 	}
 	defer source.Close()
 
 	parameters := make(map[string]string, len(cfg.Defaults)+len(opts.values))
-	for key, value := range cfg.Defaults {
-		parameters[key] = value
-	}
-	for key, value := range opts.values {
-		parameters[key] = value
-	}
+	maps.Copy(parameters, cfg.Defaults)
+	maps.Copy(parameters, opts.values)
 
 	fmt.Fprintf(output, "Creating new project %s from %s\n", projectName, sourceLabel)
 	project, err := gogogo.Create(ctx, destination, source, gogogo.Options{Parameters: parameters})
@@ -234,6 +200,41 @@ func (a *application) createProject(ctx context.Context, opts options, cfg confi
 		return fmt.Errorf("initialize project repository: %w", err)
 	}
 	return nil
+}
+
+func (a *application) openTemplate(ctx context.Context, opts options, cfg config, output io.Writer) (io.ReadCloser, string, error) {
+	if opts.file != "" {
+		source, err := os.Open(opts.file)
+		if err != nil {
+			return nil, "", fmt.Errorf("open template %s: %w", opts.file, err)
+		}
+		return source, opts.file, nil
+	}
+
+	label, archiveURL := opts.url, opts.url
+	if archiveURL == "" {
+		repo := cfg.GitHub
+		if len(opts.positionals) == 2 {
+			argument := opts.positionals[1]
+			if strings.Contains(argument, "/") {
+				var err error
+				repo, err = gogogo.ParseRepository(argument)
+				if err != nil {
+					return nil, "", fmt.Errorf("parse repository: %w", err)
+				}
+			} else {
+				repo.Branch = argument
+			}
+		}
+		label, archiveURL = repo.String(), repo.ArchiveURL()
+	}
+
+	fmt.Fprintf(output, "Downloading template from %s...\n", label)
+	source, err := a.openURL(ctx, archiveURL)
+	if err != nil {
+		return nil, "", fmt.Errorf("open template %s: %w", label, err)
+	}
+	return source, label, nil
 }
 
 func (a *application) openURL(ctx context.Context, value string) (io.ReadCloser, error) {
@@ -293,6 +294,11 @@ func parseOptions(arguments []string) (options, error) {
 		return options{}, fmt.Errorf("-github must be private, public, or internal")
 	}
 	return opts, nil
+}
+
+func (opts options) hasProjectArguments() bool {
+	return len(opts.positionals) != 0 || opts.file != "" || opts.url != "" ||
+		opts.github != "" || opts.githubOwner != "" || opts.noGit || opts.noGitHub || len(opts.values) != 0
 }
 
 func resolveGitHubOptions(opts options, cfg config) (options, error) {
@@ -369,11 +375,7 @@ Options:
 	fmt.Fprintf(output, "Configured GitHub owner: %s\n", owner)
 
 	if len(cfg.Defaults) > 0 {
-		keys := make([]string, 0, len(cfg.Defaults))
-		for key := range cfg.Defaults {
-			keys = append(keys, key)
-		}
-		sort.Strings(keys)
+		keys := slices.Sorted(maps.Keys(cfg.Defaults))
 		fmt.Fprintln(output)
 		fmt.Fprintln(output, "Default parameters:")
 		for _, key := range keys {
