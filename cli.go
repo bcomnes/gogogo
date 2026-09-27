@@ -85,7 +85,7 @@ func newApplication() *application {
 
 func (a *application) run(ctx context.Context, arguments []string, input io.Reader, output, errorOutput io.Writer) int {
 	if len(arguments) > 0 && arguments[0] == "config" {
-		return a.runConfig(arguments[1:], output, errorOutput)
+		return a.runConfig(arguments[1:], input, output, errorOutput)
 	}
 
 	opts, err := parseOptions(arguments)
@@ -331,7 +331,7 @@ func newFlagSet(opts *options, output io.Writer) *flag.FlagSet {
 func printUsage(output io.Writer, cfg config) {
 	fmt.Fprintf(output, `Usage:
   gogogo [options] <name> [%s]
-  gogogo config <show|path|set|unset> ...
+  gogogo config <show|get|path|set|unset|validate|reset> ...
 
 Create a project from a GitHub repository, local tar archive, or URL.
 Flags must be specified before the project name.

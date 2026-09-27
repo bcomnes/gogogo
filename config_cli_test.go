@@ -5,6 +5,7 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -33,6 +34,20 @@ func TestConfigSubcommandLifecycle(t *testing.T) {
 	run("set", "github.visibility", "private")
 	run("set", "github.owner", "acme")
 	run("set", "parameter.license", "MIT")
+
+	for key, want := range map[string]string{
+		"template":          "owner/template#main",
+		"github.visibility": "private",
+		"github.owner":      "acme",
+		"parameter.license": "MIT",
+	} {
+		if got := strings.TrimSpace(run("get", key)); got != want {
+			t.Fatalf("config get %s = %q, want %q", key, got, want)
+		}
+	}
+	if output := run("validate"); !strings.Contains(output, "Configuration is valid") {
+		t.Fatalf("config validate output = %q", output)
+	}
 
 	shown := run("show")
 	for _, wanted := range []string{"owner", "template", "main", "github_visibility", "private", "github_owner", "acme", "license", "MIT"} {
@@ -69,6 +84,9 @@ func TestConfigSubcommandRejectsInvalidArguments(t *testing.T) {
 		{"config"},
 		{"config", "unknown"},
 		{"config", "show", "extra"},
+		{"config", "get"},
+		{"config", "get", "unknown"},
+		{"config", "get", "parameter.missing"},
 		{"config", "path", "extra"},
 		{"config", "set", "github.visibility"},
 		{"config", "set", "github.visibility", "secret"},
@@ -78,6 +96,8 @@ func TestConfigSubcommandRejectsInvalidArguments(t *testing.T) {
 		{"config", "set", "unknown", "value"},
 		{"config", "unset"},
 		{"config", "unset", "unknown"},
+		{"config", "validate", "extra"},
+		{"config", "reset", "unexpected"},
 	}
 	for _, arguments := range tests {
 		arguments := arguments
@@ -93,6 +113,69 @@ func TestConfigSubcommandRejectsInvalidArguments(t *testing.T) {
 	}
 }
 
+func TestConfigSubcommandReset(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		arguments  []string
+		input      string
+		wantReset  bool
+		wantOutput string
+	}{
+		{name: "declined", arguments: []string{"config", "reset"}, input: "n\n", wantOutput: "Configuration unchanged"},
+		{name: "confirmed", arguments: []string{"config", "reset"}, input: "yes\n", wantReset: true, wantOutput: "Configuration reset"},
+		{name: "forced", arguments: []string{"config", "reset", "--force"}, wantReset: true, wantOutput: "Configuration reset"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			path := filepath.Join(t.TempDir(), "config.json")
+			cfg := defaultConfig()
+			cfg.GitHubVisibility = "private"
+			if err := saveConfig(path, cfg); err != nil {
+				t.Fatalf("saveConfig() error = %v", err)
+			}
+			app := &application{client: http.DefaultClient, configPath: path}
+			var output bytes.Buffer
+			var errorOutput bytes.Buffer
+			exitCode := app.run(context.Background(), test.arguments, strings.NewReader(test.input), &output, &errorOutput)
+			if exitCode != 0 {
+				t.Fatalf("run(%q) exit code = %d, stderr = %q", test.arguments, exitCode, errorOutput.String())
+			}
+			if !strings.Contains(output.String(), test.wantOutput) {
+				t.Fatalf("stdout = %q", output.String())
+			}
+			loaded, err := loadConfig(path)
+			if err != nil {
+				t.Fatalf("loadConfig() error = %v", err)
+			}
+			wantVisibility := "private"
+			if test.wantReset {
+				wantVisibility = ""
+			}
+			if loaded.GitHubVisibility != wantVisibility {
+				t.Fatalf("visibility after reset = %q, want %q", loaded.GitHubVisibility, wantVisibility)
+			}
+		})
+	}
+}
+
+func TestConfigSubcommandValidateRejectsMalformedConfig(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, []byte("not json\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	app := &application{client: http.DefaultClient, configPath: path}
+	var errorOutput bytes.Buffer
+	if exitCode := app.run(context.Background(), []string{"config", "validate"}, strings.NewReader(""), io.Discard, &errorOutput); exitCode != 1 {
+		t.Fatalf("config validate exit code = %d, stderr = %q", exitCode, errorOutput.String())
+	}
+}
+
 func TestConfigSubcommandHelp(t *testing.T) {
 	t.Parallel()
 
@@ -100,7 +183,9 @@ func TestConfigSubcommandHelp(t *testing.T) {
 	for _, argument := range []string{"help", "-help", "--help"} {
 		var output bytes.Buffer
 		exitCode := app.run(context.Background(), []string{"config", argument}, strings.NewReader(""), &output, io.Discard)
-		if exitCode != 0 || !strings.Contains(output.String(), "gogogo config set <key> <value>") {
+		if exitCode != 0 ||
+			!strings.Contains(output.String(), "gogogo config set <key> <value>") ||
+			!strings.Contains(output.String(), "gogogo config reset [--force]") {
 			t.Fatalf("config %s exit code = %d, stdout = %q", argument, exitCode, output.String())
 		}
 	}

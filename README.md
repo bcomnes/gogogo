@@ -1,4 +1,4 @@
-# gogogo
+swha# gogogo
 
 ![gogogo logo](logo/gogogo-logo.png)
 
@@ -112,15 +112,20 @@ Inspect and update configuration non-interactively with the `config` subcommand:
 
 ```console
 gogogo config show
+gogogo config get github.visibility
 gogogo config path
+gogogo config validate
 gogogo config set template bcomnes/go-template#master
 gogogo config set github.visibility private
 gogogo config set github.owner my-org
 gogogo config set parameter.license MIT
 gogogo config unset parameter.license
+gogogo config reset
+gogogo config reset --force
 ```
 
 Supported keys are `template`, `github.visibility`, `github.owner`, and `parameter.<name>`.
+`config get` prints a single value for shell scripts, `config validate` checks the on-disk file, and `config reset` restores all defaults after confirmation (`--force` skips the prompt).
 Unset `template` to restore the built-in template, or unset GitHub settings to restore local-only creation under the authenticated GitHub user.
 GitHub visibility accepts `none`, `private`, `public`, or `internal`.
 
