@@ -50,3 +50,19 @@ func TestOpenTemplateDownloadFailure(t *testing.T) {
 		t.Fatalf("source = %v, error = %v", source, err)
 	}
 }
+
+func TestOpenTemplateRejectsInvalidBranchShorthand(t *testing.T) {
+	t.Parallel()
+	for _, branch := range []string{"", "bad\nbranch"} {
+		t.Run(branch, func(t *testing.T) {
+			app := &application{client: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+				t.Fatal("unexpected download")
+				return nil, nil
+			})}}
+			source, label, err := app.openTemplate(context.Background(), options{positionals: []string{"example", branch}}, defaultConfig(), io.Discard)
+			if source != nil || label != "" || err == nil || !strings.Contains(err.Error(), "repository branch") {
+				t.Fatalf("source = %v, label = %q, error = %v", source, label, err)
+			}
+		})
+	}
+}

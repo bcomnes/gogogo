@@ -242,6 +242,9 @@ func (a *application) openTemplate(ctx context.Context, opts options, cfg config
 				repo.Branch = argument
 			}
 		}
+		if err := repo.Validate(); err != nil {
+			return nil, "", fmt.Errorf("validate repository: %w", err)
+		}
 		label, archiveURL = repo.String(), repo.ArchiveURL()
 	}
 
