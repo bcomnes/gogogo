@@ -20,6 +20,7 @@ import (
 
 const commandName = "gogogo"
 
+// application owns CLI dependencies; injected clients and runners keep tests offline.
 type application struct {
 	client          *http.Client
 	configPath      string
@@ -27,12 +28,15 @@ type application struct {
 	commands        projectCommandRunner
 }
 
+// options contains explicit command-line values before configured defaults are applied.
 type options struct {
 	configure     bool
 	help          bool
 	version       bool
 	file          string
 	url           string
+	template      string
+	pickTemplate  bool
 	github        string
 	githubOwner   string
 	defaultGitHub string
@@ -156,6 +160,14 @@ func (a *application) run(ctx context.Context, arguments []string, input io.Read
 		fmt.Fprintf(errorOutput, "Error: %v\n", err)
 		return 2
 	}
+	cfg, err = selectTemplate(ctx, opts, cfg, input, output)
+	if err != nil {
+		fmt.Fprintf(errorOutput, "Error: %v\n", err)
+		if errors.Is(err, context.Canceled) {
+			return 130
+		}
+		return 1
+	}
 	if err := a.createProject(ctx, opts, cfg, output, errorOutput); err != nil {
 		fmt.Fprintf(errorOutput, "Error: %v\n", err)
 		if errors.Is(err, context.Canceled) {
@@ -166,6 +178,8 @@ func (a *application) run(ctx context.Context, arguments []string, input io.Read
 	return 0
 }
 
+// createProject publishes the extracted template before running optional Git setup.
+// Repository setup failures leave the generated files available for recovery.
 func (a *application) createProject(ctx context.Context, opts options, cfg config, output, errorOutput io.Writer) error {
 	if len(opts.positionals) > 2 {
 		return fmt.Errorf("too many positional arguments")
@@ -202,6 +216,8 @@ func (a *application) createProject(ctx context.Context, opts options, cfg confi
 	return nil
 }
 
+// openTemplate opens a local archive or downloads the selected repository/URL.
+// The returned stream belongs to the caller and must be closed.
 func (a *application) openTemplate(ctx context.Context, opts options, cfg config, output io.Writer) (io.ReadCloser, string, error) {
 	if opts.file != "" {
 		source, err := os.Open(opts.file)
@@ -267,6 +283,7 @@ func (a *application) openURL(ctx context.Context, value string) (io.ReadCloser,
 	return response.Body, nil
 }
 
+// parseOptions rejects conflicting explicit sources before prompting or doing I/O.
 func parseOptions(arguments []string) (options, error) {
 	opts := options{values: make(parameterFlags)}
 	flags := newFlagSet(&opts, io.Discard)
@@ -278,6 +295,12 @@ func parseOptions(arguments []string) (options, error) {
 		if strings.HasPrefix(argument, "-") {
 			return options{}, fmt.Errorf("flags must be specified before the project name")
 		}
+	}
+	if opts.template != "" && opts.pickTemplate {
+		return options{}, fmt.Errorf("-template and -pick-template are mutually exclusive")
+	}
+	if (opts.template != "" || opts.pickTemplate) && (opts.file != "" || opts.url != "" || len(opts.positionals) > 1) {
+		return options{}, fmt.Errorf("template selection cannot be combined with -file, -url, or a positional repository")
 	}
 	if opts.file != "" && opts.url != "" {
 		return options{}, fmt.Errorf("-file and -url are mutually exclusive")
@@ -297,10 +320,12 @@ func parseOptions(arguments []string) (options, error) {
 }
 
 func (opts options) hasProjectArguments() bool {
-	return len(opts.positionals) != 0 || opts.file != "" || opts.url != "" ||
+	return len(opts.positionals) != 0 || opts.file != "" || opts.url != "" || opts.template != "" || opts.pickTemplate ||
 		opts.github != "" || opts.githubOwner != "" || opts.noGit || opts.noGitHub || len(opts.values) != 0
 }
 
+// resolveGitHubOptions applies saved defaults without overriding per-run opt-outs.
+// A configured owner alone never enables remote repository creation.
 func resolveGitHubOptions(opts options, cfg config) (options, error) {
 	switch {
 	case opts.noGit || opts.noGitHub:
@@ -328,6 +353,8 @@ func newFlagSet(opts *options, output io.Writer) *flag.FlagSet {
 	flags.BoolVar(&opts.help, "help", false, "Show this help message and exit")
 	flags.BoolVar(&opts.noGit, "no-git", false, "Do not initialize a local Git repository")
 	flags.BoolVar(&opts.noGitHub, "no-github", false, "Do not create a GitHub repository for this project")
+	flags.StringVar(&opts.template, "template", "", "Use a saved template by name")
+	flags.BoolVar(&opts.pickTemplate, "pick-template", false, "Choose a template interactively before creating the project")
 	flags.Var(&opts.values, "set", "Set a template parameter as key=value; may be repeated")
 	flags.StringVar(&opts.url, "url", "", "Download a .tar or .tar.gz template")
 	flags.BoolVar(&opts.version, "version", false, "Show the CLI version and exit")
@@ -349,6 +376,8 @@ Examples:
   gogogo -github=public -github-owner=my-org my-project
   gogogo config set github.visibility private
   gogogo config show
+  gogogo -template=cli my-project
+  gogogo -pick-template my-project
   gogogo my-project owner/template#main
   gogogo -file template.tar.gz my-project
 
