@@ -242,15 +242,11 @@ func strippedArchivePath(name string) (string, bool, error) {
 // containment beneath root. It does not resolve symlinks or inspect the filesystem;
 // callers must separately ensure that parent components are safe to traverse.
 func secureJoin(root, relativePath string) (string, error) {
-	target := filepath.Join(root, filepath.FromSlash(relativePath))
-	relative, err := filepath.Rel(root, target)
-	if err != nil {
-		return "", fmt.Errorf("resolve archive path %q: %w", relativePath, err)
-	}
-	if relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) || filepath.IsAbs(relative) {
+	localPath := filepath.FromSlash(relativePath)
+	if !filepath.IsLocal(localPath) {
 		return "", fmt.Errorf("archive path %q escapes its destination", relativePath)
 	}
-	return target, nil
+	return filepath.Join(root, localPath), nil
 }
 
 // ensureParentDirectories creates missing parents and rejects existing symlinks

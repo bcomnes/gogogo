@@ -29,6 +29,22 @@ func (entry testArchiveEntry) content() []byte {
 	return []byte(entry.body)
 }
 
+func TestSecureJoin(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	for _, name := range []string{"", "..", "../outside", "nested/../../outside", filepath.Join(root, "absolute")} {
+		if target, err := secureJoin(root, name); err == nil {
+			t.Errorf("secureJoin(%q) = %q, expected rejection", name, target)
+		}
+	}
+	for _, name := range []string{"README.md", "nested/file", "version..txt", "nested/../file"} {
+		want := filepath.Join(root, filepath.FromSlash(name))
+		if target, err := secureJoin(root, name); err != nil || target != want {
+			t.Errorf("secureJoin(%q) = %q, %v; want %q", name, target, err, want)
+		}
+	}
+}
+
 func TestCreate(t *testing.T) {
 	t.Parallel()
 
