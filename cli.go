@@ -290,6 +290,15 @@ func parseOptions(arguments []string) (options, error) {
 	if err := flags.Parse(arguments); err != nil {
 		return options{}, err
 	}
+	var selectionError error
+	flags.Visit(func(f *flag.Flag) {
+		if f.Name == "template" {
+			selectionError = validateTemplateName(opts.template)
+		}
+	})
+	if selectionError != nil {
+		return options{}, fmt.Errorf("-template: %w", selectionError)
+	}
 	opts.positionals = flags.Args()
 	for _, argument := range opts.positionals {
 		if strings.HasPrefix(argument, "-") {

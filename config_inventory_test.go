@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -54,6 +55,8 @@ func TestLoadConfigInventory(t *testing.T) {
 		{name: "empty ref", content: `{"templates":{"web":""}}`, wantError: `invalid template "web"`},
 		{name: "invalid ref", content: `{"templates":{"web":"not-a-repository"}}`, wantError: `invalid template "web"`},
 		{name: "invalid type", content: `{"templates":{"web":42}}`, wantError: "decode config"},
+		{name: "repeated suffix", content: `{"templates":{"web":"owner/repo.git.git#main"}}`, wantError: `invalid template "web"`},
+		{name: "URL repeated suffix", content: `{"templates":{"web":"https://github.com/owner/repo.git.git#main"}}`, wantError: `invalid template "web"`},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -113,6 +116,80 @@ func TestInventoryNilMapAndInvalidUpdate(t *testing.T) {
 	missing, err := loadConfig(filepath.Join(t.TempDir(), "missing.json"))
 	if err != nil || missing.Templates == nil {
 		t.Fatalf("missing config: %+v, %v", missing, err)
+	}
+}
+
+func TestLoadConfigStructuredRepository(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name, content, wantURL string
+	}{
+		{"legacy empty branch", `{"github":{"user":"owner","repo":"repo","branch":""},"defaults":{"license":"MIT"}}`, "https://github.com/owner/repo/archive/master.tar.gz"},
+		{"legacy omitted branch", `{"github":{"user":"owner","repo":"repo"}}`, "https://github.com/owner/repo/archive/master.tar.gz"},
+		{"literal repository suffix", `{"github":{"user":"owner","repo":"repo.git","branch":"main"}}`, "https://github.com/owner/repo.git/archive/main.tar.gz"},
+		{"owner separator", `{"github":{"user":"owner/extra","repo":"repo","branch":"main"}}`, ""},
+		{"repository separator", `{"github":{"user":"owner","repo":"extra/repo","branch":"main"}}`, ""},
+		{"owner colon", `{"github":{"user":"owner:extra","repo":"repo","branch":"main"}}`, ""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			path := filepath.Join(t.TempDir(), "config.json")
+			if err := os.WriteFile(path, []byte(test.content), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := loadConfig(path)
+			app := &application{configPath: path}
+			if test.wantURL == "" {
+				if err == nil || !strings.Contains(err.Error(), "invalid configured repository") {
+					t.Fatalf("loadConfig error = %v", err)
+				}
+				runConfigCommand(t, app, "", 1, "validate")
+			} else {
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got := cfg.GitHub.ArchiveURL(); got != test.wantURL {
+					t.Fatalf("ArchiveURL = %q, want %q", got, test.wantURL)
+				}
+				runConfigCommand(t, app, "", 0, "validate")
+			}
+			data, err := os.ReadFile(path)
+			if err != nil || string(data) != test.content {
+				t.Fatalf("load/validate changed source: %q, %v", data, err)
+			}
+		})
+	}
+}
+
+func TestInventoryRepositoryIdentity(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "config.json")
+	app := &application{configPath: path}
+	runConfigCommand(t, app, "", 0, "set", "template.web", "https://github.com/owner/repo.git#main")
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, value := range []string{"owner/repo.git.git#main", "https://github.com/owner/repo.git.git#main", "git@github.com:owner/repo.git.git#main"} {
+		runConfigCommand(t, app, "", 2, "set", "template.web", value)
+		after, err := os.ReadFile(path)
+		if err != nil || !bytes.Equal(before, after) {
+			t.Fatalf("rejected update changed file: %v", err)
+		}
+	}
+	for i := 0; i < 2; i++ {
+		if got := runConfigCommand(t, app, "", 0, "get", "template.web"); got != "owner/repo#main\n" {
+			t.Fatalf("get = %q", got)
+		}
+		runConfigCommand(t, app, "", 0, "set", "parameter.license", "MIT")
+		cfg, err := loadConfig(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		selected, err := selectTemplate(context.Background(), options{template: "web"}, cfg, strings.NewReader(""), &bytes.Buffer{})
+		if err != nil || selected.GitHub.String() != "owner/repo#main" {
+			t.Fatalf("selection = %+v, %v", selected.GitHub, err)
+		}
 	}
 }
 

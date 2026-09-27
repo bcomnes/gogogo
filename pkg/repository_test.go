@@ -59,6 +59,10 @@ func TestParseRepository(t *testing.T) {
 			if actual != test.wanted {
 				t.Fatalf("ParseRepository() = %#v, want %#v", actual, test.wanted)
 			}
+			roundTrip, err := ParseRepository(actual.String())
+			if err != nil || roundTrip != actual {
+				t.Fatalf("canonical round trip = %#v, %v; want %#v", roundTrip, err, actual)
+			}
 		})
 	}
 }
@@ -71,6 +75,56 @@ func TestParseRepositoryRejectsMalformedValues(t *testing.T) {
 			t.Parallel()
 			if _, err := ParseRepository(value); err == nil {
 				t.Fatalf("ParseRepository(%q) unexpectedly succeeded", value)
+			}
+		})
+	}
+}
+
+func TestParseRepositoryRejectsRepeatedGitSuffixes(t *testing.T) {
+	t.Parallel()
+	for _, value := range []string{
+		"owner/repo.git.git#main",
+		"owner/repo.git.git.git",
+		"https://github.com/owner/repo.git.git#main",
+		"https://github.com/owner/repo.git.git/#main",
+		"git@github.com:owner/repo.git.git#main",
+	} {
+		t.Run(value, func(t *testing.T) {
+			t.Parallel()
+			if _, err := ParseRepository(value); err == nil {
+				t.Fatalf("ParseRepository(%q) unexpectedly succeeded", value)
+			}
+		})
+	}
+}
+
+func TestRepositoryValidate(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name  string
+		repo  Repository
+		valid bool
+	}{
+		{"valid", Repository{"owner", "repo", "main"}, true},
+		{"branch with slash", Repository{"owner", "repo", "feature/templates"}, true},
+		{"literal suffix", Repository{"owner", "repo.git", "main"}, true},
+		{"empty owner", Repository{"", "repo", "main"}, false},
+		{"owner separator", Repository{"owner/extra", "repo", "main"}, false},
+		{"owner colon", Repository{"owner:extra", "repo", "main"}, false},
+		{"empty repo", Repository{"owner", "", "main"}, false},
+		{"repo separator", Repository{"owner", "extra/repo", "main"}, false},
+		{"traversal", Repository{"owner", "..", "main"}, false},
+		{"empty branch", Repository{"owner", "repo", ""}, false},
+		{"control branch", Repository{"owner", "repo", "bad\nbranch"}, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			before := test.repo
+			if err := test.repo.Validate(); (err == nil) != test.valid {
+				t.Fatalf("Validate() = %v, want valid = %v", err, test.valid)
+			}
+			if test.repo != before {
+				t.Fatal("Validate mutated repository")
 			}
 		})
 	}

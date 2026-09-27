@@ -62,6 +62,8 @@ func defaultConfigPath() (string, error) {
 // resulting configuration. A missing file is equivalent to fresh defaults;
 // missing or null maps become writable empty maps. Inventory references are
 // canonicalized in memory without rewriting the source file.
+// Legacy empty default-repository branches become master; all other structured
+// repository fields are validated as stored, without reparsing their identity.
 func loadConfig(path string) (config, error) {
 	cfg := defaultConfig()
 	file, err := os.Open(path)
@@ -96,7 +98,10 @@ func loadConfig(path string) (config, error) {
 		}
 		cfg.Templates[name] = repo.String()
 	}
-	if _, err := gogogo.ParseRepository(cfg.GitHub.String()); err != nil {
+	if cfg.GitHub.Branch == "" {
+		cfg.GitHub.Branch = "master"
+	}
+	if err := cfg.GitHub.Validate(); err != nil {
 		return config{}, fmt.Errorf("invalid configured repository: %w", err)
 	}
 	visibility, err := parseConfiguredGitHubVisibility(cfg.GitHubVisibility)

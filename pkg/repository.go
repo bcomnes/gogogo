@@ -16,12 +16,12 @@ const DefaultRepository = "bcomnes/go-template#master"
 var repositoryPartPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
 
 // Repository identifies a GitHub repository and branch.
-// ParseRepository validates input; direct struct construction bypasses validation.
+// ParseRepository validates input; callers constructing structs directly should use Validate.
 // The value carries no credentials or assurance that the repository exists.
 type Repository struct {
 	// User is the repository owner's account or organization name.
 	User string `json:"user"`
-	// Repo is the repository name without a trailing .git suffix.
+	// Repo is the repository name; ParseRepository removes a Git URL's .git suffix.
 	Repo string `json:"repo"`
 	// Branch is the archive reference, which may include slashes.
 	Branch string `json:"branch"`
@@ -31,8 +31,11 @@ type Repository struct {
 //
 // An absent or empty fragment defaults to master, not the remote's default branch.
 // Surrounding whitespace is trimmed, a trailing .git suffix is removed, and the
-// last two path components supply the owner and repository. URL hosts, schemes,
-// credentials, and preceding path components are not retained or authenticated;
+// last two path components supply the owner and repository.
+// Repeated trailing .git suffixes are rejected because reparsing the canonical
+// reference would otherwise change the repository identity.
+// URL hosts, schemes, credentials, and preceding path components are not retained
+// or authenticated;
 // accepting a URL does not mean subsequent requests will use that URL's host.
 // ArchiveURL always targets GitHub.
 //
@@ -73,17 +76,34 @@ func ParseRepository(value string) (Repository, error) {
 		Repo:   parts[len(parts)-1],
 		Branch: branch,
 	}
-	if !validRepositoryPart(repo.User) {
-		return Repository{}, fmt.Errorf("repository owner %q is invalid", repo.User)
+	if strings.HasSuffix(repo.Repo, ".git") {
+		return Repository{}, fmt.Errorf("repository %q has ambiguous trailing .git suffixes", value)
 	}
-	if !validRepositoryPart(repo.Repo) {
-		return Repository{}, fmt.Errorf("repository name %q is invalid", repo.Repo)
-	}
-	if repo.Branch == "" || strings.IndexFunc(repo.Branch, unicode.IsControl) >= 0 {
-		return Repository{}, fmt.Errorf("repository branch %q is invalid", repo.Branch)
+	if err := repo.Validate(); err != nil {
+		return Repository{}, err
 	}
 
 	return repo, nil
+}
+
+// Validate checks the actual structured fields without parsing or normalizing them.
+// Owner and repository must be nonempty ASCII components containing only letters,
+// digits, underscores, dots, or hyphens, and cannot be "." or "..".
+// Branch must be nonempty and contain no control characters; Git's full ref-name
+// rules and repository existence are not checked.
+// Unlike ParseRepository, Validate does not supply a default branch or strip a
+// .git suffix from a literal repository name.
+func (r Repository) Validate() error {
+	if !validRepositoryPart(r.User) {
+		return fmt.Errorf("repository owner %q is invalid", r.User)
+	}
+	if !validRepositoryPart(r.Repo) {
+		return fmt.Errorf("repository name %q is invalid", r.Repo)
+	}
+	if r.Branch == "" || strings.IndexFunc(r.Branch, unicode.IsControl) >= 0 {
+		return fmt.Errorf("repository branch %q is invalid", r.Branch)
+	}
+	return nil
 }
 
 // validRepositoryPart rejects empty or traversal-only path components without

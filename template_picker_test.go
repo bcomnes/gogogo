@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestSelectTemplate(t *testing.T) {
@@ -75,9 +76,44 @@ func (w cancelPromptWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
+// cancelReadReader cancels only after selection has started reading input.
+type cancelReadReader struct {
+	io.Reader
+	cancel context.CancelFunc
+}
+
+func (r cancelReadReader) Read(p []byte) (int, error) {
+	r.cancel()
+	return r.Reader.Read(p)
+}
+
+func TestTemplatePickerCancelsPendingRead(t *testing.T) {
+	t.Parallel()
+	reader, writer := io.Pipe()
+	defer reader.Close()
+	defer writer.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := selectTemplate(ctx, options{pickTemplate: true}, defaultConfig(), cancelReadReader{Reader: reader, cancel: cancel}, io.Discard)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("error = %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("picker did not cancel its pending read")
+	}
+}
+
 func TestTemplateSelectionConflicts(t *testing.T) {
 	t.Parallel()
 	for _, args := range [][]string{
+		{"-template=", "example"},
+		{"-template=bad/name", "example"},
 		{"-template=cli", "-pick-template", "example"},
 		{"-template=cli", "-file=archive.tar", "example"},
 		{"-pick-template", "-url=https://example.test/a.tar", "example"},
