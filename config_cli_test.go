@@ -3,13 +3,22 @@ package main
 import (
 	"bytes"
 	"context"
-	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func runConfigCommand(t *testing.T, app *application, input string, wantExitCode int, arguments ...string) string {
+	t.Helper()
+	var output, errorOutput bytes.Buffer
+	exitCode := app.run(context.Background(), append([]string{"config"}, arguments...), strings.NewReader(input), &output, &errorOutput)
+	if exitCode != wantExitCode {
+		t.Fatalf("gogogo config %q exit code = %d, want %d; stdout = %q, stderr = %q", arguments, exitCode, wantExitCode, output.String(), errorOutput.String())
+	}
+	return output.String()
+}
 
 func TestConfigSubcommandLifecycle(t *testing.T) {
 	t.Parallel()
@@ -18,13 +27,7 @@ func TestConfigSubcommandLifecycle(t *testing.T) {
 	app := &application{client: http.DefaultClient, configPath: path}
 	run := func(arguments ...string) string {
 		t.Helper()
-		var output bytes.Buffer
-		var errorOutput bytes.Buffer
-		exitCode := app.run(context.Background(), append([]string{"config"}, arguments...), strings.NewReader(""), &output, &errorOutput)
-		if exitCode != 0 {
-			t.Fatalf("gogogo config %v exit code = %d, stderr = %q", arguments, exitCode, errorOutput.String())
-		}
-		return output.String()
+		return runConfigCommand(t, app, "", 0, arguments...)
 	}
 
 	if got := strings.TrimSpace(run("path")); got != path {
@@ -81,34 +84,32 @@ func TestConfigSubcommandRejectsInvalidArguments(t *testing.T) {
 	t.Parallel()
 
 	tests := [][]string{
-		{"config"},
-		{"config", "unknown"},
-		{"config", "show", "extra"},
-		{"config", "get"},
-		{"config", "get", "unknown"},
-		{"config", "get", "parameter.missing"},
-		{"config", "path", "extra"},
-		{"config", "set", "github.visibility"},
-		{"config", "set", "github.visibility", "secret"},
-		{"config", "set", "github.owner", "bad/owner"},
-		{"config", "set", "parameter.", "value"},
-		{"config", "set", "parameter.owner", ""},
-		{"config", "set", "unknown", "value"},
-		{"config", "unset"},
-		{"config", "unset", "unknown"},
-		{"config", "validate", "extra"},
-		{"config", "reset", "unexpected"},
+		{},
+		{"unknown"},
+		{"show", "extra"},
+		{"get"},
+		{"get", "unknown"},
+		{"get", "parameter.missing"},
+		{"get", "parameter. "},
+		{"path", "extra"},
+		{"set", "github.visibility"},
+		{"set", "github.visibility", "secret"},
+		{"set", "github.owner", "bad/owner"},
+		{"set", "parameter.", "value"},
+		{"set", "parameter. ", "value"},
+		{"set", "parameter.owner", ""},
+		{"set", "unknown", "value"},
+		{"unset"},
+		{"unset", "unknown"},
+		{"unset", "parameter. "},
+		{"validate", "extra"},
+		{"reset", "unexpected"},
 	}
 	for _, arguments := range tests {
-		arguments := arguments
-		t.Run(strings.Join(arguments, " "), func(t *testing.T) {
+		t.Run("config "+strings.Join(arguments, " "), func(t *testing.T) {
 			t.Parallel()
 			app := &application{client: http.DefaultClient, configPath: filepath.Join(t.TempDir(), "config.json")}
-			var errorOutput bytes.Buffer
-			exitCode := app.run(context.Background(), arguments, strings.NewReader(""), io.Discard, &errorOutput)
-			if exitCode != 2 {
-				t.Fatalf("run(%q) exit code = %d, stderr = %q", arguments, exitCode, errorOutput.String())
-			}
+			runConfigCommand(t, app, "", 2, arguments...)
 		})
 	}
 }
@@ -123,9 +124,11 @@ func TestConfigSubcommandReset(t *testing.T) {
 		wantReset  bool
 		wantOutput string
 	}{
-		{name: "declined", arguments: []string{"config", "reset"}, input: "n\n", wantOutput: "Configuration unchanged"},
-		{name: "confirmed", arguments: []string{"config", "reset"}, input: "yes\n", wantReset: true, wantOutput: "Configuration reset"},
-		{name: "forced", arguments: []string{"config", "reset", "--force"}, wantReset: true, wantOutput: "Configuration reset"},
+		{name: "declined", input: "n\n", wantOutput: "Configuration unchanged"},
+		{name: "confirmed", input: "yes\n", wantReset: true, wantOutput: "Configuration reset"},
+		{name: "confirmed at EOF", input: " YeS ", wantReset: true, wantOutput: "Configuration reset"},
+		{name: "empty EOF", wantOutput: "Configuration unchanged"},
+		{name: "forced", arguments: []string{"--force"}, wantReset: true, wantOutput: "Configuration reset"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -138,14 +141,9 @@ func TestConfigSubcommandReset(t *testing.T) {
 				t.Fatalf("saveConfig() error = %v", err)
 			}
 			app := &application{client: http.DefaultClient, configPath: path}
-			var output bytes.Buffer
-			var errorOutput bytes.Buffer
-			exitCode := app.run(context.Background(), test.arguments, strings.NewReader(test.input), &output, &errorOutput)
-			if exitCode != 0 {
-				t.Fatalf("run(%q) exit code = %d, stderr = %q", test.arguments, exitCode, errorOutput.String())
-			}
-			if !strings.Contains(output.String(), test.wantOutput) {
-				t.Fatalf("stdout = %q", output.String())
+			output := runConfigCommand(t, app, test.input, 0, append([]string{"reset"}, test.arguments...)...)
+			if !strings.Contains(output, test.wantOutput) {
+				t.Fatalf("stdout = %q", output)
 			}
 			loaded, err := loadConfig(path)
 			if err != nil {
@@ -170,10 +168,7 @@ func TestConfigSubcommandValidateRejectsMalformedConfig(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 	app := &application{client: http.DefaultClient, configPath: path}
-	var errorOutput bytes.Buffer
-	if exitCode := app.run(context.Background(), []string{"config", "validate"}, strings.NewReader(""), io.Discard, &errorOutput); exitCode != 1 {
-		t.Fatalf("config validate exit code = %d, stderr = %q", exitCode, errorOutput.String())
-	}
+	runConfigCommand(t, app, "", 1, "validate")
 }
 
 func TestConfigSubcommandHelp(t *testing.T) {
@@ -181,12 +176,10 @@ func TestConfigSubcommandHelp(t *testing.T) {
 
 	app := &application{client: http.DefaultClient, configPath: filepath.Join(t.TempDir(), "config.json")}
 	for _, argument := range []string{"help", "-help", "--help"} {
-		var output bytes.Buffer
-		exitCode := app.run(context.Background(), []string{"config", argument}, strings.NewReader(""), &output, io.Discard)
-		if exitCode != 0 ||
-			!strings.Contains(output.String(), "gogogo config set <key> <value>") ||
-			!strings.Contains(output.String(), "gogogo config reset [--force]") {
-			t.Fatalf("config %s exit code = %d, stdout = %q", argument, exitCode, output.String())
+		output := runConfigCommand(t, app, "", 0, argument)
+		if !strings.Contains(output, "gogogo config set <key> <value>") ||
+			!strings.Contains(output, "gogogo config reset [--force]") {
+			t.Fatalf("config %s stdout = %q", argument, output)
 		}
 	}
 }

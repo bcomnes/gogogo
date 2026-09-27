@@ -97,29 +97,33 @@ func (a *application) runConfig(arguments []string, input io.Reader, output, err
 		if len(arguments) > 2 || (len(arguments) == 2 && !force) {
 			return configUsageError(errorOutput, "config reset accepts only --force")
 		}
-		if !force {
-			fmt.Fprint(output, "Reset all configuration? [y/N]: ")
-			answer, err := bufio.NewReader(input).ReadString('\n')
-			if err != nil && !errors.Is(err, io.EOF) {
-				fmt.Fprintf(errorOutput, "Error: read input: %v\n", err)
-				return 1
-			}
-			answer = strings.TrimSpace(answer)
-			if !strings.EqualFold(answer, "y") && !strings.EqualFold(answer, "yes") {
-				fmt.Fprintln(output, "Configuration unchanged")
-				return 0
-			}
-		}
-		if err := os.Remove(a.configPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-			fmt.Fprintf(errorOutput, "Error: reset config: %v\n", err)
-			return 1
-		}
-		fmt.Fprintf(output, "Configuration reset: %s\n", a.configPath)
-		return 0
+		return a.resetConfig(force, input, output, errorOutput)
 
 	default:
 		return configUsageError(errorOutput, fmt.Sprintf("unknown config command %q", arguments[0]))
 	}
+}
+
+func (a *application) resetConfig(force bool, input io.Reader, output, errorOutput io.Writer) int {
+	if !force {
+		fmt.Fprint(output, "Reset all configuration? [y/N]: ")
+		answer, err := bufio.NewReader(input).ReadString('\n')
+		if err != nil && !errors.Is(err, io.EOF) {
+			fmt.Fprintf(errorOutput, "Error: read input: %v\n", err)
+			return 1
+		}
+		answer = strings.TrimSpace(answer)
+		if !strings.EqualFold(answer, "y") && !strings.EqualFold(answer, "yes") {
+			fmt.Fprintln(output, "Configuration unchanged")
+			return 0
+		}
+	}
+	if err := os.Remove(a.configPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		fmt.Fprintf(errorOutput, "Error: reset config: %v\n", err)
+		return 1
+	}
+	fmt.Fprintf(output, "Configuration reset: %s\n", a.configPath)
+	return 0
 }
 
 func (a *application) updateConfig(key, value string, unset bool, output, errorOutput io.Writer) int {
@@ -165,9 +169,9 @@ func getConfigValue(cfg config, key string) (string, error) {
 		return cfg.GitHubOwner, nil
 	}
 
-	parameter, found := strings.CutPrefix(key, "parameter.")
-	if !found || strings.TrimSpace(parameter) == "" {
-		return "", fmt.Errorf("unknown config key %q", key)
+	parameter, err := configParameterName(key)
+	if err != nil {
+		return "", err
 	}
 	value, found := cfg.Defaults[parameter]
 	if !found {
@@ -201,9 +205,9 @@ func setConfigValue(cfg *config, key, value string) error {
 		return nil
 	}
 
-	parameter, found := strings.CutPrefix(key, "parameter.")
-	if !found || strings.TrimSpace(parameter) == "" {
-		return fmt.Errorf("unknown config key %q", key)
+	parameter, err := configParameterName(key)
+	if err != nil {
+		return err
 	}
 	if value == "" {
 		return fmt.Errorf("parameter value cannot be empty; use config unset %s", key)
@@ -225,12 +229,20 @@ func unsetConfigValue(cfg *config, key string) error {
 		return nil
 	}
 
-	parameter, found := strings.CutPrefix(key, "parameter.")
-	if !found || strings.TrimSpace(parameter) == "" {
-		return fmt.Errorf("unknown config key %q", key)
+	parameter, err := configParameterName(key)
+	if err != nil {
+		return err
 	}
 	delete(cfg.Defaults, parameter)
 	return nil
+}
+
+func configParameterName(key string) (string, error) {
+	parameter, found := strings.CutPrefix(key, "parameter.")
+	if !found || strings.TrimSpace(parameter) == "" {
+		return "", fmt.Errorf("unknown config key %q", key)
+	}
+	return parameter, nil
 }
 
 func configUsageError(output io.Writer, message string) int {
