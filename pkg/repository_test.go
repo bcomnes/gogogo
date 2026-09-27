@@ -67,7 +67,6 @@ func TestParseRepositoryRejectsMalformedValues(t *testing.T) {
 	t.Parallel()
 
 	for _, value := range []string{"", "repository", "owner/repo name", "owner/repo#bad\nbranch", "../repo"} {
-		value := value
 		t.Run(value, func(t *testing.T) {
 			t.Parallel()
 			if _, err := ParseRepository(value); err == nil {

@@ -148,9 +148,7 @@ func newReplacingReader(source io.Reader, replacements []replacement) io.Reader 
 
 	maximumSize := 0
 	for _, replacement := range replacements {
-		if len(replacement.old) > maximumSize {
-			maximumSize = len(replacement.old)
-		}
+		maximumSize = max(maximumSize, len(replacement.old))
 	}
 	return &replacingReader{
 		source:       source,
@@ -200,7 +198,7 @@ func (r *replacingReader) fill() {
 	for position < limit {
 		matched := false
 		for _, replacement := range r.replacements {
-			if len(r.pending)-position >= len(replacement.old) && bytes.Equal(r.pending[position:position+len(replacement.old)], replacement.old) {
+			if bytes.HasPrefix(r.pending[position:], replacement.old) {
 				r.output = append(r.output, replacement.new...)
 				position += len(replacement.old)
 				matched = true

@@ -31,7 +31,6 @@ func TestCreate(t *testing.T) {
 	t.Parallel()
 
 	for _, compressed := range []bool{false, true} {
-		compressed := compressed
 		name := "tar"
 		if compressed {
 			name = "tar.gz"
