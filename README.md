@@ -1,4 +1,4 @@
-swha# gogogo
+# gogogo
 
 ![gogogo logo](logo/gogogo-logo.png)
 
@@ -124,7 +124,7 @@ gogogo config reset
 gogogo config reset --force
 ```
 
-Supported keys are `template`, `github.visibility`, `github.owner`, and `parameter.<name>`.
+Supported keys are `template`, `template.<name>`, `github.visibility`, `github.owner`, and `parameter.<name>`.
 `config get` prints a single value for shell scripts, `config validate` checks the on-disk file, and `config reset` restores all defaults after confirmation (`--force` skips the prompt).
 Unset `template` to restore the built-in template, or unset GitHub settings to restore local-only creation under the authenticated GitHub user.
 GitHub visibility accepts `none`, `private`, `public`, or `internal`.
@@ -141,6 +141,39 @@ An explicit `-github` or `-github-owner` overrides configured values, and `gogog
 
 Configuration is stored in `~/.config/gogogo.json` by default.
 Set `GOGOGO_CONFIG` to use a different configuration path.
+
+### Saved template inventory
+
+Save a collection of named GitHub templates without changing your default:
+
+```console
+gogogo config set template.go bcomnes/go-template#master
+gogogo config set template.cli my-org/cli-template#main
+gogogo config get template.cli
+gogogo config show
+```
+
+Names are case-sensitive and may contain ASCII letters, digits, hyphens, and underscores.
+Inventory entries currently support GitHub repository references only, not local archives or arbitrary URLs.
+
+Choose a saved template directly or opt into an interactive menu:
+
+```console
+gogogo -template=cli my-project
+gogogo -pick-template my-project
+```
+
+The menu lists the configured default first, followed by saved templates sorted by name.
+Press Enter to use the default, or enter a number to choose another template.
+Invalid selections prompt again; EOF or Ctrl-C cancels before downloading or creating a project.
+The picker also works with an empty inventory, offering only the default.
+
+Selection applies only to the current run and never changes the saved default.
+Plain `gogogo my-project` remains non-interactive; use `config set template owner/repo#branch` to change its default template.
+Neither selection flag can be combined with the other, `-file`, `-url`, or a positional repository or branch.
+
+Remove one saved template with `gogogo config unset template.cli`.
+`config reset` clears the entire inventory along with the other settings.
 
 ### Extraction behavior
 

@@ -16,17 +16,26 @@ import (
 	"time"
 )
 
+// directoryMetadata defers directory permissions and timestamps until descendants
+// have been created, so restrictive modes and child writes do not interfere.
 type directoryMetadata struct {
 	path    string
 	mode    os.FileMode
 	modTime time.Time
 }
 
+// hardlink records root-relative, stripped archive paths for deferred resolution.
+// Deferral allows a link to precede its target in the tar stream.
 type hardlink struct {
 	path   string
 	target string
 }
 
+// extractArchive stages extraction on the destination's filesystem and publishes
+// the completed tree with a rename. Failed staging is removed on a best-effort
+// basis, but newly created parent directories are retained. The caller must keep
+// the destination namespace stable: the initial availability check does not make
+// the final rename an atomic create-if-absent operation.
 func extractArchive(ctx context.Context, source io.Reader, destination string, values map[string]string) error {
 	absoluteDestination, err := filepath.Abs(destination)
 	if err != nil {
@@ -63,6 +72,9 @@ func extractArchive(ctx context.Context, source io.Reader, destination string, v
 	return nil
 }
 
+// destinationAvailable requires a missing directory entry, not merely a path
+// whose target is missing. Lstat therefore rejects dangling symlinks as well as
+// ordinary files and directories. This check does not reserve the path.
 func destinationAvailable(destination string) error {
 	_, err := os.Lstat(destination)
 	if err == nil {
@@ -74,6 +86,19 @@ func destinationAvailable(destination string) error {
 	return nil
 }
 
+// extractInto consumes a tar or magic-byte-detected gzip stream into a private,
+// caller-owned staging root. It strips one leading component per entry, rejects
+// duplicate resulting paths, and supports only directories, regular files,
+// symlinks, and hardlinks. It does not verify that all stripped components match.
+//
+// Regular files are streamed to disk before classification and substitution.
+// Hardlinks are resolved after all entries, and directory metadata is applied last.
+// Gzip input is drained after tar EOF to surface trailer/checksum errors. Neither
+// that drain nor metadata finalization checks ctx; entry iteration and file-copy
+// reads provide cooperative, rather than immediate, cancellation.
+//
+// The caller is responsible for cleanup on error and for preventing concurrent
+// modification of root. No limits are placed on expanded size or entry count.
 func extractInto(ctx context.Context, source io.Reader, root string, values map[string]string) error {
 	buffered := bufio.NewReader(source)
 	archiveReader := io.Reader(buffered)
@@ -185,6 +210,11 @@ func extractInto(ctx context.Context, source io.Reader, root string, values map[
 	return applyDirectoryMetadata(directories)
 }
 
+// strippedArchivePath normalizes a slash-separated tar name and removes its first
+// component. The boolean is false for entries representing only the stripped root.
+// Absolute paths, escaping traversal, empty names, and backslashes are rejected;
+// internal dot components are cleaned before stripping. This is a per-entry check,
+// not verification that the archive has a single shared root directory.
 func strippedArchivePath(name string) (string, bool, error) {
 	if name == "" || strings.ContainsRune(name, '\\') {
 		return "", false, fmt.Errorf("archive path %q is invalid", name)
@@ -208,6 +238,9 @@ func strippedArchivePath(name string) (string, bool, error) {
 	return relativePath, true, nil
 }
 
+// secureJoin converts an archive-relative path to a native path and checks lexical
+// containment beneath root. It does not resolve symlinks or inspect the filesystem;
+// callers must separately ensure that parent components are safe to traverse.
 func secureJoin(root, relativePath string) (string, error) {
 	target := filepath.Join(root, filepath.FromSlash(relativePath))
 	relative, err := filepath.Rel(root, target)
@@ -220,6 +253,10 @@ func secureJoin(root, relativePath string) (string, error) {
 	return target, nil
 }
 
+// ensureParentDirectories creates missing parents and rejects existing symlinks
+// or non-directories along the route to target. target must already have passed
+// secureJoin, and root must be a trusted directory. Lstat checks assume exclusive
+// control of the staging tree; they do not prevent concurrent replacement races.
 func ensureParentDirectories(root, target string) error {
 	parent := filepath.Dir(target)
 	relative, err := filepath.Rel(root, parent)
@@ -250,6 +287,15 @@ func ensureParentDirectories(root, target string) error {
 	return nil
 }
 
+// writeArchiveFile exclusively creates a regular file, streams source into it,
+// and substitutes placeholders only after the on-disk file is classified as text.
+// source must be limited to this entry's payload, as a tar.Reader is. Parent paths
+// must already be checked; exclusive creation prevents replacing an existing entry.
+//
+// Permission bits and nonzero modification times are restored after formatting.
+// A failure may leave a partial file for the staging owner to remove. Cancellation
+// is checked before payload and formatting reads, not during binary classification
+// or an already-blocked underlying read.
 func writeArchiveFile(ctx context.Context, source io.Reader, target, relativePath string, header *tar.Header, values map[string]string) error {
 	file, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_EXCL, header.FileInfo().Mode().Perm())
 	if err != nil {
@@ -285,6 +331,10 @@ func writeArchiveFile(ctx context.Context, source io.Reader, target, relativePat
 	return nil
 }
 
+// createArchiveSymlink preserves a relative link target only when its lexical
+// resolution from the link's directory stays within root. Absolute, empty, and
+// backslash-containing targets are rejected. The target need not exist, and its
+// symlink chain is not resolved here. The link's parent must already be validated.
 func createArchiveSymlink(root, target, relativePath, linkTarget string) error {
 	if linkTarget == "" || strings.ContainsRune(linkTarget, '\\') || filepath.IsAbs(filepath.FromSlash(linkTarget)) {
 		return fmt.Errorf("symlink %q has unsafe target %q", relativePath, linkTarget)
@@ -300,6 +350,11 @@ func createArchiveSymlink(root, target, relativePath, linkTarget string) error {
 	return nil
 }
 
+// createHardlinks resolves deferred links in passes, allowing forward references
+// and chains that eventually reach a regular file. A pass without progress reports
+// an unresolved target, including missing targets and cycles. Direct symlink and
+// directory targets are rejected by Lstat. The routine relies on the extraction
+// tree's previously checked parents remaining unchanged and does not check context.
 func createHardlinks(root string, links []hardlink) error {
 	pending := append([]hardlink(nil), links...)
 	for len(pending) > 0 {
@@ -339,6 +394,10 @@ func createHardlinks(root string, links []hardlink) error {
 	return nil
 }
 
+// applyDirectoryMetadata restores permissions and nonzero modification times from
+// deepest directory to shallowest, avoiding restrictive parent modes until child
+// metadata is complete. It reorders the supplied slice in place and returns on the
+// first error without undoing metadata already applied.
 func applyDirectoryMetadata(directories []directoryMetadata) error {
 	sort.Slice(directories, func(i, j int) bool {
 		return strings.Count(directories[i].path, string(filepath.Separator)) > strings.Count(directories[j].path, string(filepath.Separator))
@@ -356,11 +415,16 @@ func applyDirectoryMetadata(directories []directoryMetadata) error {
 	return nil
 }
 
+// contextReader adds a cancellation check before each read without taking
+// ownership of the underlying reader. It cannot interrupt a Read in progress;
+// readers that can block indefinitely need their own cancellation mechanism.
 type contextReader struct {
 	ctx    context.Context
 	reader io.Reader
 }
 
+// Read returns the context error without touching the source when cancellation
+// has already occurred; otherwise it preserves the underlying reader's result.
 func (r *contextReader) Read(buffer []byte) (int, error) {
 	if err := r.ctx.Err(); err != nil {
 		return 0, err

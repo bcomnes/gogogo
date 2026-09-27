@@ -13,23 +13,36 @@ import (
 	gogogo "github.com/bcomnes/gogogo/pkg"
 )
 
+// projectCommandRunner abstracts executable discovery and synchronous execution.
+// Implementations run in the supplied directory, route output to the supplied
+// writers, and should honor context cancellation without interpreting args as shell
+// input. Callers use this boundary to substitute runners in tests.
 type projectCommandRunner interface {
 	LookPath(name string) (string, error)
 	Run(ctx context.Context, dir string, stdout, stderr io.Writer, name string, args ...string) error
 }
 
+// Command deadlines bound individual steps, not the entire initialization. The
+// parent context may impose a shorter deadline across the whole operation.
 const (
 	gitCommandTimeout = time.Minute
 	ghAuthTimeout     = 30 * time.Second
 	ghCreateTimeout   = 2 * time.Minute
 )
 
+// execProjectCommandRunner executes local tools with the process environment.
+// It does not sandbox Git configuration, hooks, or GitHub CLI credentials.
 type execProjectCommandRunner struct{}
 
+// LookPath uses the process PATH to locate a tool; it does not verify its identity
+// or guarantee that a later invocation will succeed.
 func (execProjectCommandRunner) LookPath(name string) (string, error) {
 	return exec.LookPath(name)
 }
 
+// Run invokes a program directly, without a shell, and waits for completion.
+// CommandContext kills the command process when ctx is done; this does not promise
+// termination of every descendant process or interruption of blocked output writers.
 func (execProjectCommandRunner) Run(ctx context.Context, dir string, stdout, stderr io.Writer, name string, args ...string) error {
 	command := exec.CommandContext(ctx, name, args...)
 	command.Dir = dir
@@ -38,6 +51,17 @@ func (execProjectCommandRunner) Run(ctx context.Context, dir string, stdout, std
 	return command.Run()
 }
 
+// initializeRepository creates a local repository and initial commit, then
+// optionally creates a GitHub repository and pushes through the authenticated gh
+// CLI. opts must already contain validated GitHub visibility and owner settings.
+// All project files eligible for git add --all may be included in the push; this
+// function does not inspect them for secrets or override local Git behavior.
+//
+// Existing .git entries are rejected before any command runs. Subsequent failures
+// are not rolled back: files, commits, remotes, or a remote repository may remain.
+// Missing gh or a non-cancellation authentication failure produces a warning and
+// leaves the successful local initialization intact. Cancellation and timeouts are
+// errors, as are failures during repository creation or push.
 func (a *application) initializeRepository(ctx context.Context, project gogogo.Project, opts options, output, errorOutput io.Writer) error {
 	if err := ensureGitMetadataAbsent(project.Destination); err != nil {
 		return err
@@ -96,6 +120,8 @@ func (a *application) initializeRepository(ctx context.Context, project gogogo.P
 	return nil
 }
 
+// projectCommands returns the injected runner when present, otherwise the local
+// process runner. It does not cache or mutate the application's configuration.
 func (a *application) projectCommands() projectCommandRunner {
 	if a.commands != nil {
 		return a.commands
@@ -103,6 +129,11 @@ func (a *application) projectCommands() projectCommandRunner {
 	return execProjectCommandRunner{}
 }
 
+// runProjectCommand gives one command a deadline bounded by parent and annotates
+// execution failures with action. When execution fails after the context expires,
+// the context error takes precedence so errors.Is can identify cancellation or a
+// deadline. A runner that returns success is treated as successful even if the
+// context has concurrently expired; enforcing cancellation belongs to the runner.
 func runProjectCommand(parent context.Context, runner projectCommandRunner, timeout time.Duration, action, dir string, stdout, stderr io.Writer, name string, args ...string) error {
 	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
@@ -120,6 +151,10 @@ func runProjectCommand(parent context.Context, runner projectCommandRunner, time
 	return nil
 }
 
+// ensureGitMetadataAbsent rejects any .git entry, including files and dangling
+// symlinks, rather than following it into template-supplied repository metadata.
+// This is a point-in-time check, not protection against concurrent filesystem
+// changes or Git configuration inherited from outside destination.
 func ensureGitMetadataAbsent(destination string) error {
 	metadata := filepath.Join(destination, ".git")
 	_, err := os.Lstat(metadata)
