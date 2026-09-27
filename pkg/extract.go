@@ -292,12 +292,13 @@ func ensureParentDirectories(root, target string) error {
 // source must be limited to this entry's payload, as a tar.Reader is. Parent paths
 // must already be checked; exclusive creation prevents replacing an existing entry.
 //
-// Permission bits and nonzero modification times are restored after formatting.
+// Files are staged with private read/write permissions; archive permission bits
+// and nonzero modification times are restored after formatting.
 // A failure may leave a partial file for the staging owner to remove. Cancellation
 // is checked before payload and formatting reads, not during binary classification
 // or an already-blocked underlying read.
 func writeArchiveFile(ctx context.Context, source io.Reader, target, relativePath string, header *tar.Header, values map[string]string) error {
-	file, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_EXCL, header.FileInfo().Mode().Perm())
+	file, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return fmt.Errorf("create file %q: %w", relativePath, err)
 	}
@@ -353,8 +354,9 @@ func createArchiveSymlink(root, target, relativePath, linkTarget string) error {
 // createHardlinks resolves deferred links in passes, allowing forward references
 // and chains that eventually reach a regular file. A pass without progress reports
 // an unresolved target, including missing targets and cycles. Direct symlink and
-// directory targets are rejected by Lstat. The routine relies on the extraction
-// tree's previously checked parents remaining unchanged and does not check context.
+// directory targets are rejected by Lstat, and target parents must not be symlinks.
+// The routine relies on exclusive control of the extraction tree and does not check
+// context.
 func createHardlinks(root string, links []hardlink) error {
 	pending := append([]hardlink(nil), links...)
 	for len(pending) > 0 {
@@ -364,6 +366,9 @@ func createHardlinks(root string, links []hardlink) error {
 			target, err := secureJoin(root, link.target)
 			if err != nil {
 				return err
+			}
+			if err := ensureParentDirectories(root, target); err != nil {
+				return fmt.Errorf("inspect hardlink target %q: %w", link.target, err)
 			}
 			info, err := os.Lstat(target)
 			if errors.Is(err, os.ErrNotExist) {
