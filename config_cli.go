@@ -12,6 +12,9 @@ import (
 	gogogo "github.com/bcomnes/gogogo/pkg"
 )
 
+// runConfig dispatches noninteractive configuration commands without fetching
+// templates. It returns 2 for usage or key/value errors and 1 for configuration
+// I/O or load failures; help is available even when the config path is invalid.
 func (a *application) runConfig(arguments []string, input io.Reader, output, errorOutput io.Writer) int {
 	if len(arguments) == 1 && (arguments[0] == "help" || arguments[0] == "-help" || arguments[0] == "--help") {
 		printConfigUsage(output)
@@ -104,6 +107,9 @@ func (a *application) runConfig(arguments []string, input io.Reader, output, err
 	}
 }
 
+// resetConfig removes the entire configuration, including the named inventory,
+// after confirmation unless forced. A missing file is already reset; declining
+// confirmation succeeds without changing anything.
 func (a *application) resetConfig(force bool, input io.Reader, output, errorOutput io.Writer) int {
 	if !force {
 		fmt.Fprint(output, "Reset all configuration? [y/N]: ")
@@ -126,6 +132,9 @@ func (a *application) resetConfig(force bool, input io.Reader, output, errorOutp
 	return 0
 }
 
+// updateConfig loads and validates existing settings before changing one key.
+// Invalid updates are never saved, and unrelated settings are retained. The
+// success message is emitted only after the replacement file has been stored.
 func (a *application) updateConfig(key, value string, unset bool, output, errorOutput io.Writer) int {
 	cfg, err := loadConfig(a.configPath)
 	if err != nil {
@@ -153,7 +162,20 @@ func (a *application) updateConfig(key, value string, unset bool, output, errorO
 	return 0
 }
 
+// getConfigValue resolves a public config key to its display value. The bare
+// template key is the default repository, not an inventory lookup. Missing
+// inventory entries (including on a nil map) return an unset-key error.
 func getConfigValue(cfg config, key string) (string, error) {
+	if name, found := strings.CutPrefix(key, "template."); found {
+		if err := validateTemplateName(name); err != nil {
+			return "", err
+		}
+		value, found := cfg.Templates[name]
+		if !found {
+			return "", fmt.Errorf("config key %q is not set", key)
+		}
+		return value, nil
+	}
 	switch key {
 	case "template":
 		return cfg.GitHub.String(), nil
@@ -180,7 +202,25 @@ func getConfigValue(cfg config, key string) (string, error) {
 	return value, nil
 }
 
+// setConfigValue validates a key/value pair before updating the supplied config.
+// Named templates use the same repository syntax as the default template and
+// store its canonical representation. Their map is allocated lazily so callers
+// can safely add inventory entries to a legacy or zero-value config.
 func setConfigValue(cfg *config, key, value string) error {
+	if name, found := strings.CutPrefix(key, "template."); found {
+		if err := validateTemplateName(name); err != nil {
+			return err
+		}
+		repo, err := gogogo.ParseRepository(value)
+		if err != nil {
+			return fmt.Errorf("invalid template %q: %w", name, err)
+		}
+		if cfg.Templates == nil {
+			cfg.Templates = make(map[string]string)
+		}
+		cfg.Templates[name] = repo.String()
+		return nil
+	}
 	switch key {
 	case "template":
 		repo, err := gogogo.ParseRepository(value)
@@ -216,7 +256,17 @@ func setConfigValue(cfg *config, key, value string) error {
 	return nil
 }
 
+// unsetConfigValue resets built-in settings or removes a named map entry.
+// Removing an absent inventory entry is idempotent, even with a nil map; unsetting
+// the default template never removes inventory entries, and vice versa.
 func unsetConfigValue(cfg *config, key string) error {
+	if name, found := strings.CutPrefix(key, "template."); found {
+		if err := validateTemplateName(name); err != nil {
+			return err
+		}
+		delete(cfg.Templates, name)
+		return nil
+	}
 	switch key {
 	case "template":
 		cfg.GitHub = defaultConfig().GitHub
@@ -237,6 +287,9 @@ func unsetConfigValue(cfg *config, key string) error {
 	return nil
 }
 
+// configParameterName recognizes the parameter namespace after built-in and
+// inventory keys have been handled. It preserves parameter spelling while
+// rejecting an absent or whitespace-only name.
 func configParameterName(key string) (string, error) {
 	parameter, found := strings.CutPrefix(key, "parameter.")
 	if !found || strings.TrimSpace(parameter) == "" {
@@ -245,12 +298,16 @@ func configParameterName(key string) (string, error) {
 	return parameter, nil
 }
 
+// configUsageError pairs an actionable argument error with command help and
+// returns the usage-error exit status shared by config subcommands.
 func configUsageError(output io.Writer, message string) int {
 	fmt.Fprintf(output, "Error: %s\n\n", message)
 	printConfigUsage(output)
 	return 2
 }
 
+// printConfigUsage documents public config keys independently of on-disk JSON
+// field names, including the distinction between default and named templates.
 func printConfigUsage(output io.Writer) {
 	fmt.Fprint(output, `Usage:
   gogogo config show
@@ -262,9 +319,19 @@ func printConfigUsage(output io.Writer) {
   gogogo config reset [--force]
 
 Keys:
-  template              Template repository as owner/repo[#branch]
+  template              Default template repository as owner/repo[#branch]
+  template.<name>       Named template repository; does not change the default
   github.visibility     none, private, public, or internal
   github.owner          GitHub user or organization; none uses the authenticated user
   parameter.<name>      Default template parameter
+
+Template names use only ASCII letters, digits, underscores, and hyphens (nonempty).
+Repository references accept owner/repo[#branch] or Git URLs and are stored as owner/repo#branch.
+Use get/set/unset template.<name> to manage the inventory; unset removes only that entry.
+
+Examples:
+  gogogo config set template.web owner/web-template#main
+  gogogo config get template.web
+  gogogo config unset template.web
 `)
 }

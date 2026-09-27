@@ -91,6 +91,11 @@ func TestConfigSubcommandRejectsInvalidArguments(t *testing.T) {
 		{"get", "unknown"},
 		{"get", "parameter.missing"},
 		{"get", "parameter. "},
+		{"get", "template.missing"},
+		{"get", "template."},
+		{"set", "template.bad.name", "owner/repo"},
+		{"set", "template.web", ""},
+		{"unset", "template.bad/name"},
 		{"path", "extra"},
 		{"set", "github.visibility"},
 		{"set", "github.visibility", "secret"},
@@ -178,7 +183,10 @@ func TestConfigSubcommandHelp(t *testing.T) {
 	for _, argument := range []string{"help", "-help", "--help"} {
 		output := runConfigCommand(t, app, "", 0, argument)
 		if !strings.Contains(output, "gogogo config set <key> <value>") ||
-			!strings.Contains(output, "gogogo config reset [--force]") {
+			!strings.Contains(output, "gogogo config reset [--force]") ||
+			!strings.Contains(output, "template.<name>") ||
+			!strings.Contains(output, "does not change the default") ||
+			!strings.Contains(output, "ASCII letters, digits, underscores, and hyphens") {
 			t.Fatalf("config %s stdout = %q", argument, output)
 		}
 	}
