@@ -56,7 +56,7 @@ jobs:
         run: go test ./...
 
       - name: Create and publish release
-        uses: bcomnes/go-bump@6816636936a3430dbd9d32828c7cc0c626aaa85d # v0.1.2
+        uses: bcomnes/go-bump@v0
         with:
           version-type: ${{ inputs.version-type }}
           new-version: ${{ inputs.new-version }}
