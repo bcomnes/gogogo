@@ -6,21 +6,31 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/bcomnes/gogogo/pkg"
 )
 
+// config is the persisted configuration, overlaid on built-in defaults when loaded.
+// GitHub selects the default template; Templates is an independent inventory of
+// named repositories and does not change that selection. Older files may omit
+// the inventory entirely. Default parameter values remain in Defaults.
 type config struct {
 	GitHub           gogogo.Repository `json:"github"`
 	GitHubVisibility string            `json:"github_visibility,omitempty"`
 	GitHubOwner      string            `json:"github_owner,omitempty"`
 	Defaults         map[string]string `json:"defaults"`
+	// Templates maps case-sensitive names to canonical owner/repo#branch references.
+	Templates map[string]string `json:"templates,omitempty"`
 }
 
+// defaultConfig returns fresh configuration with independent, writable maps.
+// A malformed built-in repository is a programming error rather than a user
+// configuration error, so parsing it unsuccessfully panics.
 func defaultConfig() config {
 	repo, err := gogogo.ParseRepository(gogogo.DefaultRepository)
 	if err != nil {
@@ -28,11 +38,14 @@ func defaultConfig() config {
 	}
 
 	return config{
-		GitHub:   repo,
-		Defaults: make(map[string]string),
+		GitHub:    repo,
+		Defaults:  make(map[string]string),
+		Templates: make(map[string]string),
 	}
 }
 
+// defaultConfigPath honors GOGOGO_CONFIG verbatim when set, otherwise locating
+// gogogo.json under the user's ~/.config directory. It does not create files.
 func defaultConfigPath() (string, error) {
 	if path := os.Getenv("GOGOGO_CONFIG"); path != "" {
 		return path, nil
@@ -45,6 +58,12 @@ func defaultConfigPath() (string, error) {
 	return filepath.Join(home, ".config", "gogogo.json"), nil
 }
 
+// loadConfig overlays one JSON value on the built-in defaults and validates the
+// resulting configuration. A missing file is equivalent to fresh defaults;
+// missing or null maps become writable empty maps. Inventory references are
+// canonicalized in memory without rewriting the source file.
+// Legacy empty default-repository branches become master; all other structured
+// repository fields are validated as stored, without reparsing their identity.
 func loadConfig(path string) (config, error) {
 	cfg := defaultConfig()
 	file, err := os.Open(path)
@@ -56,17 +75,57 @@ func loadConfig(path string) (config, error) {
 	}
 	defer file.Close()
 
+	type diskConfig struct {
+		GitHub           *gogogo.Repository `json:"github"`
+		GitHubVisibility *string            `json:"github_visibility"`
+		GitHubOwner      *string            `json:"github_owner"`
+		Defaults         map[string]string  `json:"defaults"`
+		Templates        map[string]string  `json:"templates"`
+	}
+
+	var disk diskConfig
 	decoder := json.NewDecoder(file)
-	if err := decoder.Decode(&cfg); err != nil {
+	if err := decoder.Decode(&disk); err != nil {
 		return config{}, fmt.Errorf("decode config: %w", err)
 	}
 	if err := ensureJSONEnd(decoder); err != nil {
 		return config{}, fmt.Errorf("decode config: %w", err)
 	}
+	if disk.GitHub != nil {
+		cfg.GitHub = *disk.GitHub
+	}
+	if disk.GitHubVisibility != nil {
+		cfg.GitHubVisibility = *disk.GitHubVisibility
+	}
+	if disk.GitHubOwner != nil {
+		cfg.GitHubOwner = *disk.GitHubOwner
+	}
+	if disk.Defaults != nil {
+		cfg.Defaults = disk.Defaults
+	}
+	if disk.Templates != nil {
+		cfg.Templates = disk.Templates
+	}
 	if cfg.Defaults == nil {
 		cfg.Defaults = make(map[string]string)
 	}
-	if _, err := gogogo.ParseRepository(cfg.GitHub.String()); err != nil {
+	if cfg.Templates == nil {
+		cfg.Templates = make(map[string]string)
+	}
+	for _, name := range slices.Sorted(maps.Keys(cfg.Templates)) {
+		if err := validateTemplateName(name); err != nil {
+			return config{}, err
+		}
+		repo, err := gogogo.ParseRepository(cfg.Templates[name])
+		if err != nil {
+			return config{}, fmt.Errorf("invalid template %q: %w", name, err)
+		}
+		cfg.Templates[name] = repo.String()
+	}
+	if cfg.GitHub.Branch == "" {
+		cfg.GitHub.Branch = "master"
+	}
+	if err := cfg.GitHub.Validate(); err != nil {
 		return config{}, fmt.Errorf("invalid configured repository: %w", err)
 	}
 	visibility, err := parseConfiguredGitHubVisibility(cfg.GitHubVisibility)
@@ -83,6 +142,21 @@ func loadConfig(path string) (config, error) {
 	return cfg, nil
 }
 
+// validateTemplateName checks the shared naming contract for inventory keys.
+// Names are nonempty and case-sensitive, with only ASCII letters, digits,
+// underscores, and hyphens allowed. Whitespace is rejected, not trimmed, so a
+// name has the same meaning in stored JSON and template.<name> config commands.
+func validateTemplateName(name string) error {
+	if name != "" && strings.IndexFunc(name, func(r rune) bool {
+		return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '_' || r == '-')
+	}) == -1 {
+		return nil
+	}
+	return fmt.Errorf("invalid template name %q (expected nonempty ASCII letters, digits, underscores, or hyphens)", name)
+}
+
+// ensureJSONEnd permits trailing whitespace but rejects a second JSON value or
+// malformed trailing content, preventing partially accepted configuration files.
 func ensureJSONEnd(decoder *json.Decoder) error {
 	var extra any
 	if err := decoder.Decode(&extra); errors.Is(err, io.EOF) {
@@ -93,6 +167,10 @@ func ensureJSONEnd(decoder *json.Decoder) error {
 	return fmt.Errorf("unexpected data after JSON object")
 }
 
+// saveConfig writes indented JSON through a private temporary file in the same
+// directory, then renames it over the destination. Callers supply validated
+// configuration; failed writes leave the previous file intact and clean up the
+// temporary file. Empty inventories are omitted for backward compatibility.
 func saveConfig(path string, cfg config) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("create config directory: %w", err)
@@ -125,6 +203,9 @@ func saveConfig(path string, cfg config) error {
 	return nil
 }
 
+// configure runs the legacy interactive setup for the default repository,
+// GitHub settings, and parameter defaults, preserving the named inventory.
+// EOF ends further prompts, and only a successfully completed setup is saved.
 func configure(input io.Reader, output io.Writer, path string, cfg config) error {
 	reader := bufio.NewReader(input)
 
@@ -174,11 +255,7 @@ func configure(input io.Reader, output io.Writer, path string, cfg config) error
 		cfg.GitHubOwner = owner
 	}
 
-	keys := make([]string, 0, len(cfg.Defaults))
-	for key := range cfg.Defaults {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
+	keys := slices.Sorted(maps.Keys(cfg.Defaults))
 
 	for index := 0; !eof; index++ {
 		defaultValue := ""
@@ -216,6 +293,8 @@ func configure(input io.Reader, output io.Writer, path string, cfg config) error
 	return nil
 }
 
+// parseConfiguredGitHubVisibility normalizes a visibility setting and maps
+// "none" to the empty value used to disable automatic GitHub creation.
 func parseConfiguredGitHubVisibility(value string) (string, error) {
 	visibility := strings.ToLower(strings.TrimSpace(value))
 	switch visibility {
@@ -228,6 +307,9 @@ func parseConfiguredGitHubVisibility(value string) (string, error) {
 	}
 }
 
+// parseConfiguredGitHubOwner accepts one repository-owner component, using the
+// repository parser's validation rules. Empty input or "none" selects the
+// authenticated user rather than an explicitly configured owner.
 func parseConfiguredGitHubOwner(value string) (string, error) {
 	owner := strings.TrimSpace(value)
 	if owner == "" || strings.EqualFold(owner, "none") {
@@ -240,6 +322,9 @@ func parseConfiguredGitHubOwner(value string) (string, error) {
 	return owner, nil
 }
 
+// prompt reads a trimmed line, substituting defaultValue for a blank response.
+// It reports EOF separately from errors so callers can use a final unterminated
+// response while avoiding subsequent prompts on an exhausted input stream.
 func prompt(reader *bufio.Reader, output io.Writer, label, defaultValue string) (string, bool, error) {
 	fmt.Fprint(output, label)
 	if defaultValue != "" {

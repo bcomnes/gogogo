@@ -27,6 +27,43 @@ func TestFormatReader(t *testing.T) {
 	}
 }
 
+func TestFormatReaderEdgeCases(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		source string
+		wanted string
+	}{
+		{name: "empty input"},
+		{name: "partial placeholder", source: "{{name", wanted: "{{name"},
+		{name: "partial suffix", source: "{{name}} {{na", wanted: "Ada {{na"},
+		{name: "adjacent placeholders", source: "{{name}}{{name}}__name__", wanted: "AdaAdaAda"},
+		{name: "different key lengths", source: "{{n}} {{name}}", wanted: "N Ada"},
+		{name: "empty replacement", source: "before{{empty}}after", wanted: "beforeafter"},
+		{name: "empty key ignored", source: "{{}} ____", wanted: "{{}} ____"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			values := map[string]string{"n": "N", "name": "Ada", "empty": "", "": "ignored"}
+			for _, source := range []io.Reader{
+				strings.NewReader(test.source),
+				&chunkReader{value: test.source},
+			} {
+				formatted, err := io.ReadAll(formatReader(source, values))
+				if err != nil {
+					t.Fatalf("ReadAll(%T) error = %v", source, err)
+				}
+				if string(formatted) != test.wanted {
+					t.Fatalf("formatted content (%T) = %q, want %q", source, formatted, test.wanted)
+				}
+			}
+		})
+	}
+}
+
 func TestIsBinaryFile(t *testing.T) {
 	t.Parallel()
 
@@ -38,8 +75,6 @@ func TestIsBinaryFile(t *testing.T) {
 	}
 
 	for name, value := range values {
-		name := name
-		value := value
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
