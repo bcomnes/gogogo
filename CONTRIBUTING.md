@@ -8,8 +8,8 @@ Other branches are skipped, and release runs are serialized to avoid competing v
 
 Choose a version directive such as `patch` or `minor`.
 For `custom`, also enter an explicit semantic version such as `0.2.0`, without the leading `v`.
-Dry-run mode is enabled by default: it creates and validates a local release candidate on the runner, but does not push refs, create a GitHub Release, or seed the Go proxy.
-Uncheck **dry-run** to publish.
+The workflow publishes by default.
+Check **Dry run — test the release without publishing** to create and validate a local release candidate on the runner without pushing refs, creating a GitHub Release, or seeding the Go proxy.
 The workflow tests the current source, then runs race tests, vet, and a build against the exact release commit before publication.
 
 Publication uses the built-in `GITHUB_TOKEN` with job-scoped `contents: write`; no additional secret is required.

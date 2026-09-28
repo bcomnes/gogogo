@@ -23,7 +23,7 @@ on:
         type: string
       dry-run:
         description: Dry run — test the release without publishing
-        default: true
+        default: false
         type: boolean
 
 permissions: {}
