@@ -1,0 +1,65 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version-type:
+        description: Version bump
+        required: true
+        default: patch
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+          - premajor
+          - preminor
+          - prepatch
+          - prerelease
+          - custom
+      new-version:
+        description: Explicit version for custom (for example 0.2.0, without v)
+        required: false
+        type: string
+      dry-run:
+        description: Validate publication without changing remote state
+        default: true
+        type: boolean
+
+permissions: {}
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.ref_name == github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Validate source
+        run: go test ./...
+
+      - name: Create and publish release
+        uses: bcomnes/go-bump@6816636936a3430dbd9d32828c7cc0c626aaa85d # v0.1.2
+        with:
+          version-type: ${{ inputs.version-type }}
+          new-version: ${{ inputs.new-version }}
+          publish-dry-run: ${{ inputs.dry-run }}
+          github-token: ${{ github.token }}
+          pre-publish: go test -race ./... && go vet ./... && make build

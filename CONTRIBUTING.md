@@ -1,5 +1,39 @@
 # Contributing
 
+## Releases
+
+The manual **Release** workflow uses [`bcomnes/go-bump`](https://github.com/bcomnes/go-bump) and the `goversion` tool pinned in `go.mod`.
+After the workflow is merged, open **Actions → Release → Run workflow** and select the default branch (`master`).
+Other branches are skipped, and release runs are serialized to avoid competing version bumps.
+
+Choose a version directive such as `patch` or `minor`.
+For `custom`, also enter an explicit semantic version such as `0.2.0`, without the leading `v`.
+Dry-run mode is enabled by default: it creates and validates a local release candidate on the runner, but does not push refs, create a GitHub Release, or seed the Go proxy.
+Uncheck **dry-run** to publish.
+The workflow tests the current source, then runs race tests, vet, and a build against the exact release commit before publication.
+
+Publication uses the built-in `GITHUB_TOKEN` with job-scoped `contents: write`; no additional secret is required.
+Repository rules must allow that token to push the release commit and tag to the default branch.
+Events created using this token generally do not trigger further GitHub Actions workflows, so do not rely on tag-push or release events from this workflow to start another workflow.
+Publication also seeds the public Go module proxy.
+
+The local release commands remain available:
+
+```console
+make version bump=patch
+go test -race ./...
+go vet ./...
+make build
+make publish args=-dry
+make publish
+```
+
+If publication fails after creating a release commit, do not blindly rerun the whole workflow: another relative bump could create the next version.
+Inspect the failed run's version, commit, and tag, fetch the default branch and tags, and use `make publish` from the matching clean release checkout to resume publication.
+If nothing was pushed, recreate the exact intended version locally with `make version bump=0.2.0` (substituting the version from the failed run), validate it, and publish.
+Never move or recreate an already published version tag.
+See the [go-bump recovery guide](https://github.com/bcomnes/go-bump#recovering-a-failed-publication) for details.
+
 ## Guidelines
 
 - Patches, ideas, and changes are welcome.
