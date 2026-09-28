@@ -22,7 +22,7 @@ on:
         required: false
         type: string
       dry-run:
-        description: Validate publication without changing remote state
+        description: Dry run — test the release without publishing
         default: true
         type: boolean
 
