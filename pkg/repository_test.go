@@ -108,6 +108,7 @@ func TestRepositoryValidate(t *testing.T) {
 		{"valid", Repository{"owner", "repo", "main"}, true},
 		{"branch with slash", Repository{"owner", "repo", "feature/templates"}, true},
 		{"literal suffix", Repository{"owner", "repo.git", "main"}, true},
+		{"repeated suffix", Repository{"owner", "repo.git.git", "main"}, false},
 		{"empty owner", Repository{"", "repo", "main"}, false},
 		{"owner separator", Repository{"owner/extra", "repo", "main"}, false},
 		{"owner colon", Repository{"owner:extra", "repo", "main"}, false},

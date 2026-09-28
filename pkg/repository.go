@@ -100,6 +100,9 @@ func (r Repository) Validate() error {
 	if !validRepositoryPart(r.Repo) {
 		return fmt.Errorf("repository name %q is invalid", r.Repo)
 	}
+	if hasRepeatedGitSuffix(r.Repo) {
+		return fmt.Errorf("repository name %q has ambiguous trailing .git suffixes", r.Repo)
+	}
 	if r.Branch == "" || strings.IndexFunc(r.Branch, unicode.IsControl) >= 0 {
 		return fmt.Errorf("repository branch %q is invalid", r.Branch)
 	}
@@ -110,6 +113,15 @@ func (r Repository) Validate() error {
 // claiming to enforce all of GitHub's account and repository naming policies.
 func validRepositoryPart(value string) bool {
 	return value != "." && value != ".." && repositoryPartPattern.MatchString(value)
+}
+
+func hasRepeatedGitSuffix(value string) bool {
+	suffixes := 0
+	for strings.HasSuffix(value, ".git") {
+		suffixes++
+		value = strings.TrimSuffix(value, ".git")
+	}
+	return suffixes > 1
 }
 
 // String returns the canonical user/repo#branch representation.

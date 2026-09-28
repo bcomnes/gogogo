@@ -75,12 +75,36 @@ func loadConfig(path string) (config, error) {
 	}
 	defer file.Close()
 
+	type diskConfig struct {
+		GitHub           *gogogo.Repository `json:"github"`
+		GitHubVisibility *string            `json:"github_visibility"`
+		GitHubOwner      *string            `json:"github_owner"`
+		Defaults         map[string]string  `json:"defaults"`
+		Templates        map[string]string  `json:"templates"`
+	}
+
+	var disk diskConfig
 	decoder := json.NewDecoder(file)
-	if err := decoder.Decode(&cfg); err != nil {
+	if err := decoder.Decode(&disk); err != nil {
 		return config{}, fmt.Errorf("decode config: %w", err)
 	}
 	if err := ensureJSONEnd(decoder); err != nil {
 		return config{}, fmt.Errorf("decode config: %w", err)
+	}
+	if disk.GitHub != nil {
+		cfg.GitHub = *disk.GitHub
+	}
+	if disk.GitHubVisibility != nil {
+		cfg.GitHubVisibility = *disk.GitHubVisibility
+	}
+	if disk.GitHubOwner != nil {
+		cfg.GitHubOwner = *disk.GitHubOwner
+	}
+	if disk.Defaults != nil {
+		cfg.Defaults = disk.Defaults
+	}
+	if disk.Templates != nil {
+		cfg.Templates = disk.Templates
 	}
 	if cfg.Defaults == nil {
 		cfg.Defaults = make(map[string]string)

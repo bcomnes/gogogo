@@ -126,7 +126,10 @@ func TestLoadConfigStructuredRepository(t *testing.T) {
 	}{
 		{"legacy empty branch", `{"github":{"user":"owner","repo":"repo","branch":""},"defaults":{"license":"MIT"}}`, "https://github.com/owner/repo/archive/master.tar.gz"},
 		{"legacy omitted branch", `{"github":{"user":"owner","repo":"repo"}}`, "https://github.com/owner/repo/archive/master.tar.gz"},
+		{"null github", `{"github":null}`, defaultConfig().GitHub.ArchiveURL()},
+		{"null visibility and owner", `{"github_visibility":null,"github_owner":null}`, defaultConfig().GitHub.ArchiveURL()},
 		{"literal repository suffix", `{"github":{"user":"owner","repo":"repo.git","branch":"main"}}`, "https://github.com/owner/repo.git/archive/main.tar.gz"},
+		{"repeated repository suffix", `{"github":{"user":"owner","repo":"repo.git.git","branch":"main"}}`, ""},
 		{"owner separator", `{"github":{"user":"owner/extra","repo":"repo","branch":"main"}}`, ""},
 		{"repository separator", `{"github":{"user":"owner","repo":"extra/repo","branch":"main"}}`, ""},
 		{"owner colon", `{"github":{"user":"owner:extra","repo":"repo","branch":"main"}}`, ""},
